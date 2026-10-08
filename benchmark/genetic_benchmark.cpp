@@ -192,17 +192,13 @@ void insertionSortPrograms(genetic::program *programs, int size) {
     }
   }
 
-  // do insertion sort
-  for (int i = 1; i < size; i++) {
-    genetic::program key(programs[i]);
-    int j = i - 1;
-
-    while (j >= 0 && (programs[j].raw_fitness_ > key.raw_fitness_)) {
-      programs[j + 1] = programs[j];
-      j--;
-    }
-    programs[j + 1] = key;
-  }
+  std::vector<genetic::program> sorted(std::make_move_iterator(programs),
+                                       std::make_move_iterator(programs + size));
+  std::stable_sort(sorted.begin(), sorted.end(),
+                   [](const genetic::program &a, const genetic::program &b) {
+                     return a.raw_fitness_ < b.raw_fitness_;
+                   });
+  std::move(sorted.begin(), sorted.end(), programs);
 }
 
 void run_symbolic_regression(const std::string &dataset_file) {

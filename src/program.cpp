@@ -214,7 +214,32 @@ program::program(const program &src)
   std::copy(src.nodes, src.nodes + src.len, nodes);
 }
 
+program::program(program &&src) noexcept
+    : nodes(src.nodes), len(src.len), depth(src.depth),
+      raw_fitness_(src.raw_fitness_), metric(src.metric),
+      mut_type(src.mut_type) {
+  src.nodes = nullptr;
+  src.len = 0;
+}
+
+program &program::operator=(program &&src) noexcept {
+  if (this != &src) {
+    delete[] nodes;
+    nodes = src.nodes;
+    len = src.len;
+    depth = src.depth;
+    raw_fitness_ = src.raw_fitness_;
+    metric = src.metric;
+    mut_type = src.mut_type;
+    src.nodes = nullptr;
+    src.len = 0;
+  }
+  return *this;
+}
+
 program &program::operator=(const program &src) {
+  if (this == &src)
+    return *this;
   len = src.len;
   depth = src.depth;
   raw_fitness_ = src.raw_fitness_;
@@ -626,6 +651,7 @@ void hoist_mutation(const program &prog, program &p_out, const param &params,
   sub_end += prog_start;
 
   p_out.len = (prog_start) + (sub_end - sub_start) + (prog.len - prog_end);
+  delete[] p_out.nodes;
   p_out.nodes = new node[p_out.len];
   p_out.metric = prog.metric;
 
