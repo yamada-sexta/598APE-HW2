@@ -52,6 +52,155 @@ void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
   }
 }
 
+namespace {
+
+constexpr int kBlock = 128;
+
+bool fits_block_stack(const program &p) {
+  int sp = 0;
+  for (int i = p.len - 1; i >= 0; --i) {
+    int ar = detail::arity(p.nodes[i].t);
+    if (sp < ar)
+      return false;
+    sp -= ar;
+    if (sp == MAX_STACK_SIZE)
+      return false;
+    ++sp;
+  }
+  return sp >= 1;
+}
+
+const float *eval_block(const program &p, const float *data, uint64_t stride,
+                        uint64_t r0, int n,
+                        float (*buf)[kBlock], const float **slot) {
+  int sp = 0;
+  for (int i = p.len - 1; i >= 0; --i) {
+    const node &nd = p.nodes[i];
+    switch (nd.t) {
+    case node::type::variable:
+      slot[sp++] = data + stride * nd.u.fid + r0;
+      continue;
+    case node::type::constant: {
+      float v = nd.u.val;
+      float *o = buf[sp];
+      for (int j = 0; j < n; ++j)
+        o[j] = v;
+      slot[sp++] = o;
+      continue;
+    }
+    default:
+      break;
+    }
+
+    if (detail::arity(nd.t) == 1) {
+      const float *a = slot[sp - 1];
+      float *o = buf[sp - 1];
+      switch (nd.t) {
+      case node::type::abs:
+        for (int j = 0; j < n; ++j)
+          o[j] = fabsf(a[j]);
+        break;
+      case node::type::sin:
+        for (int j = 0; j < n; ++j)
+          o[j] = sinf(a[j]);
+        break;
+      case node::type::cos:
+        for (int j = 0; j < n; ++j)
+          o[j] = cosf(a[j]);
+        break;
+      case node::type::log:
+        for (int j = 0; j < n; ++j) {
+          float v = fabsf(a[j]);
+          o[j] = v < detail::MIN_VAL ? 0.f : logf(v);
+        }
+        break;
+      case node::type::sq:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] * a[j];
+        break;
+      case node::type::sqrt:
+        for (int j = 0; j < n; ++j)
+          o[j] = sqrtf(fabsf(a[j]));
+        break;
+      case node::type::neg:
+        for (int j = 0; j < n; ++j)
+          o[j] = -a[j];
+        break;
+      case node::type::cube:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] * a[j] * a[j];
+        break;
+      default:
+        for (int j = 0; j < n; ++j) {
+          float in[2] = {a[j], 0.0f};
+          o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
+        }
+        break;
+      }
+      slot[sp - 1] = o;
+    } else {
+      const float *a = slot[sp - 1];
+      const float *b = slot[sp - 2];
+      float *o = buf[sp - 2];
+      switch (nd.t) {
+      case node::type::add:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] + b[j];
+        break;
+      case node::type::sub:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] - b[j];
+        break;
+      case node::type::mul:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] * b[j];
+        break;
+      case node::type::div:
+        for (int j = 0; j < n; ++j)
+          o[j] = fabsf(b[j]) < detail::MIN_VAL ? 1.0f : a[j] / b[j];
+        break;
+      case node::type::fdim:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] <= b[j] ? 0.0f : a[j] - b[j];
+        break;
+      case node::type::gt:
+        for (int j = 0; j < n; ++j)
+          o[j] = a[j] > b[j] ? 1.0f : 0.0f;
+        break;
+      default:
+        for (int j = 0; j < n; ++j) {
+          float in[2] = {a[j], b[j]};
+          o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
+        }
+        break;
+      }
+      slot[sp - 2] = o;
+      --sp;
+    }
+  }
+  return slot[sp - 1];
+}
+
+struct eval_scratch {
+  float buf[MAX_STACK_SIZE][kBlock];
+  const float *slot[MAX_STACK_SIZE];
+};
+
+void execute_one(const program &p, const float *data, uint64_t n_rows,
+                 float *out, eval_scratch &s) {
+  if (!fits_block_stack(p)) {
+    execute_kernel(const_cast<program_t>(&p), data, out, n_rows, 1);
+    return;
+  }
+  for (uint64_t r0 = 0; r0 < n_rows; r0 += kBlock) {
+    int n = static_cast<int>(std::min<uint64_t>(kBlock, n_rows - r0));
+    const float *res = eval_block(p, data, n_rows, r0, n, s.buf, s.slot);
+    std::copy(res, res + n, out + r0);
+  }
+}
+
+}
+
 program::program()
     : len(0), depth(0), raw_fitness_(0.0f), metric(metric_t::mse),
       mut_type(mutation_t::none), nodes(nullptr) {}
@@ -103,8 +252,11 @@ void compute_metric(int n_rows, int n_progs, const float *y,
 
 void execute(const program_t &d_progs, const int n_rows, const int n_progs,
              const float *data, float *y_pred) {
-  execute_kernel(d_progs, data, y_pred, static_cast<uint64_t>(n_rows),
-                 static_cast<uint64_t>(n_progs));
+  eval_scratch s;
+  for (int pid = 0; pid < n_progs; ++pid) {
+    execute_one(d_progs[pid], data, static_cast<uint64_t>(n_rows),
+                y_pred + static_cast<uint64_t>(pid) * n_rows, s);
+  }
 }
 
 void find_fitness(program_t d_prog, float *score, const param &params,
