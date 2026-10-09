@@ -11,7 +11,9 @@
 #include <numeric>
 #include <program.h>
 #include <random>
+#include <cstring>
 #include <stack>
+#include <unordered_map>
 
 namespace genetic {
 
@@ -364,10 +366,67 @@ float fused_score(const program &p, metric_t metric, const float *data,
 
 }
 
+namespace {
+
+struct prog_key {
+  const node *nodes;
+  int len;
+  uint64_t hash;
+  bool operator==(const prog_key &o) const {
+    return len == o.len && hash == o.hash &&
+           std::memcmp(nodes, o.nodes, sizeof(node) * len) == 0;
+  }
+};
+
+struct prog_key_hash {
+  size_t operator()(const prog_key &k) const { return k.hash; }
+};
+
+prog_key make_key(const program &p) {
+  static_assert(sizeof(node) == 8, "node is hashed as 8 raw bytes");
+  uint64_t h = 1469598103934665603ull ^ static_cast<uint64_t>(p.len);
+  for (int i = 0; i < p.len; ++i) {
+    uint64_t w;
+    std::memcpy(&w, p.nodes + i, sizeof(w));
+    h = (h ^ w) * 1099511628211ull;
+    h ^= h >> 29;
+  }
+  return prog_key{p.nodes, p.len, h};
+}
+
+}
+
 void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
                          const param &params, const int n_rows,
                          const float *data, const float *y,
                          const float *sample_weights) {
+  set_batched_fitness(n_progs, h_progs, nullptr, params, n_rows, data, y,
+                      sample_weights);
+}
+
+void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
+                         const std::vector<program> *prev_progs,
+                         const param &params, const int n_rows,
+                         const float *data, const float *y,
+                         const float *sample_weights) {
+  std::unordered_map<prog_key, int, prog_key_hash> seen;
+  seen.reserve(2 * n_progs);
+  std::vector<int> source(n_progs);
+  std::vector<int> work;
+  work.reserve(n_progs);
+  if (prev_progs != nullptr) {
+    for (int i = 0; i < static_cast<int>(prev_progs->size()); ++i) {
+      seen.emplace(make_key((*prev_progs)[i]), -1 - i);
+    }
+  }
+  for (int pid = 0; pid < n_progs; ++pid) {
+    auto it = seen.emplace(make_key(h_progs[pid]), pid);
+    source[pid] = it.first->second;
+    if (it.second || source[pid] == pid) {
+      work.push_back(pid);
+    }
+  }
+
   const uint64_t rows = static_cast<uint64_t>(n_rows);
   const bool fused =
       params.metric == metric_t::mse || params.metric == metric_t::logloss;
@@ -377,7 +436,9 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
     WS += sample_weights[i];
   }
 
-  thread_pool::instance().parallel_for(n_progs, 4, [&](int pid) {
+  thread_pool::instance().parallel_for(
+      static_cast<int>(work.size()), 4, [&](int w) {
+    const int pid = work[w];
     static thread_local eval_scratch s;
     static thread_local std::vector<float> y_pred;
     program &p = h_progs[pid];
@@ -393,6 +454,15 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
       p.raw_fitness_ = score;
     }
   });
+
+  for (int pid = 0; pid < n_progs; ++pid) {
+    int src = source[pid];
+    if (src < 0) {
+      h_progs[pid].raw_fitness_ = (*prev_progs)[-1 - src].raw_fitness_;
+    } else if (src != pid) {
+      h_progs[pid].raw_fitness_ = h_progs[src].raw_fitness_;
+    }
+  }
 }
 
 float get_fitness(const program &prog, const param &params) {

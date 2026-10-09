@@ -165,6 +165,12 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
                          const float *data, const float *y,
                          const float *sample_weights);
 
+void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
+                         const std::vector<program> *prev_progs,
+                         const param &params, const int n_rows,
+                         const float *data, const float *y,
+                         const float *sample_weights);
+
 /**
  * @brief Returns precomputed fitness score of program,
  *        after accounting for parsimony
