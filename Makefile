@@ -1,6 +1,6 @@
 CXX := g++
 OPTFLAGS ?= -O3 -march=native -ffp-contract=off
-CXXFLAGS := -std=c++17 -Wall -Wextra -I include -I src -I. $(OPTFLAGS) -MMD -MP
+CXXFLAGS := -std=c++17 -Wall -Wextra -pthread -I include -I src -I. $(OPTFLAGS) -MMD -MP
 
 # Directories
 SRC_DIR := src
@@ -29,6 +29,8 @@ directories:
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling $<..."
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(OBJS): Makefile
 
 # build benchmark lib 
 $(BENCH_BIN): $(BENCH_SRC) $(OBJS)

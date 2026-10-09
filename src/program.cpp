@@ -3,6 +3,7 @@
 #include "node_detail.h"
 #include "philox_engine.h"
 #include "reg_stack.h"
+#include "thread_pool.h"
 #include <algorithm>
 #include <cstdint>
 #include <fitness.h>
@@ -321,21 +322,77 @@ void set_fitness(program &h_prog, const param &params, const int n_rows,
   h_prog.raw_fitness_ = score[0];
 }
 
+namespace {
+
+float fused_score(const program &p, metric_t metric, const float *data,
+                  const float *Y, const float *W, uint64_t n_samples,
+                  float WS, eval_scratch &s) {
+  float N = static_cast<float>(n_samples);
+  float out = 0.0f;
+  for (uint64_t r0 = 0; r0 < n_samples; r0 += kBlock) {
+    int n = static_cast<int>(std::min<uint64_t>(kBlock, n_samples - r0));
+    const float *res = eval_block(p, data, n_samples, r0, n, s.buf, s.slot);
+    if (metric == metric_t::mse) {
+      for (int j = 0; j < n; ++j) {
+        uint64_t i = r0 + j;
+        float d = res[j] - Y[i];
+        float error = N * W[i] * d * d / WS;
+        out += error / N;
+      }
+    } else {
+      for (int j = 0; j < n; ++j) {
+        uint64_t i = r0 + j;
+        float logsig;
+        float yp = res[j];
+        float y = Y[i];
+        float w = W[i];
+        if (yp < -33.3)
+          logsig = yp;
+        else if (yp <= -18)
+          logsig = yp - expf(yp);
+        else if (yp <= 37)
+          logsig = -log1pf(expf(-yp));
+        else
+          logsig = -expf(-yp);
+        float error = ((1 - y) * yp - logsig) * (N * w / WS);
+        out += error / N;
+      }
+    }
+  }
+  return out;
+}
+
+}
+
 void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
                          const param &params, const int n_rows,
                          const float *data, const float *y,
                          const float *sample_weights) {
+  const uint64_t rows = static_cast<uint64_t>(n_rows);
+  const bool fused =
+      params.metric == metric_t::mse || params.metric == metric_t::logloss;
 
-  std::vector<float> score(n_progs);
-
-  find_batched_fitness(n_progs, h_progs.data(), score.data(), params, n_rows,
-                       data, y, sample_weights);
-
-  // Update scores on host and device
-  // TODO: Find a way to reduce the number of implicit memory transfers
-  for (auto i = 0; i < n_progs; ++i) {
-    h_progs[i].raw_fitness_ = score[i];
+  float WS = 0.0f;
+  for (uint64_t i = 0; i < rows; ++i) {
+    WS += sample_weights[i];
   }
+
+  thread_pool::instance().parallel_for(n_progs, 4, [&](int pid) {
+    static thread_local eval_scratch s;
+    static thread_local std::vector<float> y_pred;
+    program &p = h_progs[pid];
+    if (fused && fits_block_stack(p)) {
+      p.raw_fitness_ = fused_score(p, params.metric, data, y, sample_weights,
+                                   rows, WS, s);
+    } else {
+      y_pred.resize(rows);
+      execute_one(p, data, rows, y_pred.data(), s);
+      float score;
+      compute_metric(n_rows, 1, y, y_pred.data(), sample_weights, &score,
+                     params);
+      p.raw_fitness_ = score;
+    }
+  });
 }
 
 float get_fitness(const program &prog, const param &params) {
