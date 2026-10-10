@@ -1,8 +1,7 @@
 #include <philox_rng.h>
 #include <math.h>
 
-/* Global generator state */
-static philox_state_t global_philox_state = {
+philox_state_t global_philox_state = {
     .counter = {1, 2, 3, 3},
     .key = {56, 712},
     .initialized = false
@@ -20,16 +19,16 @@ static void multiply_high_low(uint32_t a, uint32_t b, uint32_t* result_low,
 /* Helper function for a single round of the underlying Philox algorithm. */
 static void philox_oneround(uint32_t counter[4], uint32_t key[2]) {
     uint32_t lo0, hi0, lo1, hi1;
-    
+
     multiply_high_low(PHILOX_M4x32A, counter[0], &lo0, &hi0);
     multiply_high_low(PHILOX_M4x32B, counter[2], &lo1, &hi1);
-    
+
     uint32_t result[4];
     result[0] = hi1 ^ counter[1] ^ key[0];
     result[1] = lo1;
     result[2] = hi0 ^ counter[3] ^ key[1];
     result[3] = lo0;
-    
+
     counter[0] = result[0];
     counter[1] = result[1];
     counter[2] = result[2];
@@ -79,15 +78,15 @@ void philox_skip(uint64_t count) {
     if (!global_philox_state.initialized) {
         philox_reset();
     }
-    
+
     const uint32_t count_lo = (uint32_t)count;
     uint32_t count_hi = (uint32_t)(count >> 32);
-    
+
     global_philox_state.counter[0] += count_lo;
     if (global_philox_state.counter[0] < count_lo) {
         ++count_hi;
     }
-    
+
     global_philox_state.counter[1] += count_hi;
     if (global_philox_state.counter[1] < count_hi) {
         if (++global_philox_state.counter[2] == 0) {
@@ -101,13 +100,13 @@ void philox_next4(uint32_t out[4]) {
     if (!global_philox_state.initialized) {
         philox_reset();
     }
-    
+
     for (int i = 0; i < 4; i++) {
         out[i] = global_philox_state.counter[i];
     }
-    
+
     uint32_t key[2] = {global_philox_state.key[0], global_philox_state.key[1]};
-    
+
     for (int i = 0; i < 10; i++) {
         philox_oneround(out, key);
         if (i == 9) {

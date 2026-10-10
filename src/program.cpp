@@ -436,8 +436,12 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
     WS += sample_weights[i];
   }
 
+  std::stable_sort(work.begin(), work.end(), [&](int a, int b) {
+    return h_progs[a].len > h_progs[b].len;
+  });
+  const int chunk = rows >= 4096 ? 1 : 4;
   thread_pool::instance().parallel_for(
-      static_cast<int>(work.size()), 4, [&](int w) {
+      static_cast<int>(work.size()), chunk, [&](int w) {
     const int pid = work[w];
     static thread_local eval_scratch s;
     static thread_local std::vector<float> y_pred;
@@ -488,7 +492,8 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
   float bound = dist_uniform(rng);
 
   // Specify subtree start probs acc to Koza's selection approach
-  std::vector<float> node_probs(len, 0.1);
+  static thread_local std::vector<float> node_probs;
+  node_probs.assign(len, 0.1);
   float sum = 0.1 * len;
 
   for (int i = 0; i < len; ++i) {
@@ -525,9 +530,10 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
 
 int get_depth(const program &p_out) {
   int depth = 0;
-  std::stack<int> arity_stack;
+  static thread_local std::vector<int> arity_stack;
+  arity_stack.clear();
   for (auto i = 0; i < p_out.len; ++i) {
-    node curr(p_out.nodes[i]);
+    const node &curr = p_out.nodes[i];
 
     // Update depth
     int sz = arity_stack.size();
@@ -535,24 +541,20 @@ int get_depth(const program &p_out) {
 
     // Update stack
     if (curr.is_nonterminal()) {
-      arity_stack.push(curr.arity());
+      arity_stack.push_back(curr.arity());
     } else {
       // Only triggered for a depth 0 node
       if (arity_stack.empty())
         break;
 
-      int e = arity_stack.top();
-      arity_stack.pop();
-      arity_stack.push(e - 1);
+      arity_stack.back() -= 1;
 
-      while (arity_stack.top() == 0) {
-        arity_stack.pop();
+      while (arity_stack.back() == 0) {
+        arity_stack.pop_back();
         if (arity_stack.empty())
           break;
 
-        e = arity_stack.top();
-        arity_stack.pop();
-        arity_stack.push(e - 1);
+        arity_stack.back() -= 1;
       }
     }
   }
@@ -562,9 +564,9 @@ int get_depth(const program &p_out) {
 
 void build_program(program &p_out, const param &params, PhiloxEngine &rng) {
   // Define data structures needed for tree
-  std::stack<int> arity_stack;
-  std::vector<node> nodelist;
-  nodelist.reserve(1 << (MAX_STACK_SIZE));
+  std::stack<int, std::vector<int>> arity_stack;
+  static thread_local std::vector<node> nodelist;
+  nodelist.clear();
 
   // Specify Distributions with parameters
   uniform_int_distribution_custom<int> dist_function(

@@ -39,6 +39,8 @@ typedef struct {
     bool initialized;
 } philox_state_t;
 
+extern philox_state_t global_philox_state;
+
 /* Function prototypes */
 void philox_seed(uint32_t seed);
 void philox_seed_with_key(uint32_t seed, uint32_t key0, uint32_t key1);

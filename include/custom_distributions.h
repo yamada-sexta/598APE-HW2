@@ -12,34 +12,36 @@ public:
   using result_type = IntType;
 
   uniform_int_distribution_custom()
-      : a_(0), b_(std::numeric_limits<IntType>::max()) {}
+      : uniform_int_distribution_custom(0,
+                                        std::numeric_limits<IntType>::max()) {}
 
   // Constructor takes inclusive lower and upper bounds.
   uniform_int_distribution_custom(result_type a, result_type b) : a_(a), b_(b) {
     if (b < a) {
       throw std::invalid_argument("Range error: b must be >= a");
     }
+    range_ = static_cast<uint32_t>(b_) - static_cast<uint32_t>(a_) + 1u;
+    // Calculate the largest multiple of 'range' that fits in a uint32_t.
+    limit_ = std::numeric_limits<uint32_t>::max() -
+             (std::numeric_limits<uint32_t>::max() % range_);
   }
 
   // When called with a random engine, returns a uniformly distributed integer.
   // The engine is expected to provide a uint32_t via operator().
   template <typename Engine> result_type operator()(Engine &eng) {
-    // Compute the range size.
-    uint32_t range = static_cast<uint32_t>(b_ - a_ + 1);
-    // Calculate the largest multiple of 'range' that fits in a uint32_t.
-    uint32_t limit = std::numeric_limits<uint32_t>::max() -
-                     (std::numeric_limits<uint32_t>::max() % range);
     uint32_t x;
     // Rejection sampling to avoid bias.
     do {
       x = eng();
-    } while (x >= limit);
-    return a_ + static_cast<result_type>(x % range);
+    } while (x >= limit_);
+    return a_ + static_cast<result_type>(x % range_);
   }
 
 private:
   result_type a_;
   result_type b_;
+  uint32_t range_;
+  uint32_t limit_;
 };
 
 // Custom uniform real distribution mapping the raw uint32_t to a double in [0,
