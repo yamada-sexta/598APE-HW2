@@ -2,6 +2,7 @@
 #include "custom_distributions.h"
 #include "node_detail.h"
 #include "philox_engine.h"
+#include "fast_math.h"
 #include "reg_stack.h"
 #include "thread_pool.h"
 #include <algorithm>
@@ -76,6 +77,7 @@ bool fits_block_stack(const program &p) {
 const float *eval_block(const program &p, const float *data, uint64_t stride,
                         uint64_t r0, int n,
                         float (*buf)[kBlock], const float **slot) {
+  static const bool fast_math = detail::use_fast_math_blocks();
   int sp = 0;
   for (int i = p.len - 1; i >= 0; --i) {
     const node &nd = p.nodes[i];
@@ -86,6 +88,7 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
     case node::type::constant: {
       float v = nd.u.val;
       float *o = buf[sp];
+      #pragma GCC ivdep
       for (int j = 0; j < n; ++j)
         o[j] = v;
       slot[sp++] = o;
@@ -100,40 +103,76 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
       float *o = buf[sp - 1];
       switch (nd.t) {
       case node::type::abs:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = fabsf(a[j]);
         break;
       case node::type::sin:
+#if defined(__FMA__)
+        if (fast_math) {
+          detail::sinf_block(a, o, n);
+          break;
+        }
+#endif
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = sinf(a[j]);
         break;
       case node::type::cos:
+#if defined(__FMA__)
+        if (fast_math) {
+          detail::cosf_block(a, o, n);
+          break;
+        }
+#endif
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = cosf(a[j]);
         break;
       case node::type::log:
+#if defined(__FMA__)
+        if (fast_math) {
+          float v[kBlock];
+          #pragma GCC ivdep
+          for (int j = 0; j < n; ++j) {
+            float m = fabsf(a[j]);
+            v[j] = m < detail::MIN_VAL ? 1.0f : m;
+          }
+          detail::logf_block(v, v, n);
+          #pragma GCC ivdep
+          for (int j = 0; j < n; ++j)
+            o[j] = fabsf(a[j]) < detail::MIN_VAL ? 0.f : v[j];
+          break;
+        }
+#endif
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j) {
           float v = fabsf(a[j]);
           o[j] = v < detail::MIN_VAL ? 0.f : logf(v);
         }
         break;
       case node::type::sq:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] * a[j];
         break;
       case node::type::sqrt:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = sqrtf(fabsf(a[j]));
         break;
       case node::type::neg:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = -a[j];
         break;
       case node::type::cube:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] * a[j] * a[j];
         break;
       default:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j) {
           float in[2] = {a[j], 0.0f};
           o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
@@ -147,30 +186,37 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
       float *o = buf[sp - 2];
       switch (nd.t) {
       case node::type::add:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] + b[j];
         break;
       case node::type::sub:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] - b[j];
         break;
       case node::type::mul:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] * b[j];
         break;
       case node::type::div:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = fabsf(b[j]) < detail::MIN_VAL ? 1.0f : a[j] / b[j];
         break;
       case node::type::fdim:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] <= b[j] ? 0.0f : a[j] - b[j];
         break;
       case node::type::gt:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
           o[j] = a[j] > b[j] ? 1.0f : 0.0f;
         break;
       default:
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j) {
           float in[2] = {a[j], b[j]};
           o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);

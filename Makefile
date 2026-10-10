@@ -39,12 +39,15 @@ $(BENCH_BIN): $(BENCH_SRC) $(OBJS)
 
 -include $(OBJS:.o=.d) $(BENCH_BIN).d
 
+check-math: tests/check_fast_math.cpp $(SRC_DIR)/fast_math.h
+	@$(CXX) $(CXXFLAGS) $< -o check_fast_math && ./check_fast_math
+
 # Clean build files
 clean:
 	@echo "Cleaning build files..."
-	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d
+	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d check_fast_math check_fast_math.d
 
 # Clean and rebuild
 rebuild: clean all
 
-.PHONY: all clean rebuild directories
+.PHONY: all clean rebuild directories check-math
