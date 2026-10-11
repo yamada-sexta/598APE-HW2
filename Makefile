@@ -30,6 +30,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling $<..."
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(OBJ_DIR)/fast_math.o: CXXFLAGS += -fno-trapping-math
+
 $(OBJS): Makefile
 
 # build benchmark lib 
@@ -39,8 +41,8 @@ $(BENCH_BIN): $(BENCH_SRC) $(OBJS)
 
 -include $(OBJS:.o=.d) $(BENCH_BIN).d
 
-check-math: tests/check_fast_math.cpp $(SRC_DIR)/fast_math.h
-	@$(CXX) $(CXXFLAGS) $< -o check_fast_math && ./check_fast_math
+check-math: tests/check_fast_math.cpp $(OBJ_DIR)/fast_math.o
+	@$(CXX) $(CXXFLAGS) $^ -o check_fast_math && ./check_fast_math
 
 check-rng: tests/check_rng.cpp $(SRC_DIR)/philox_rng.cpp include/philox_engine.h include/custom_distributions.h
 	@$(CXX) $(CXXFLAGS) $< $(SRC_DIR)/philox_rng.cpp -o check_rng && ./check_rng

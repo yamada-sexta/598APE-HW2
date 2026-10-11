@@ -108,7 +108,7 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
           o[j] = fabsf(a[j]);
         break;
       case node::type::sin:
-#if defined(__FMA__)
+#if defined(GENETIC_FAST_MATH)
         if (fast_math) {
           detail::sinf_block(a, o, n);
           break;
@@ -119,7 +119,7 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
           o[j] = sinf(a[j]);
         break;
       case node::type::cos:
-#if defined(__FMA__)
+#if defined(GENETIC_FAST_MATH)
         if (fast_math) {
           detail::cosf_block(a, o, n);
           break;
@@ -130,7 +130,7 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
           o[j] = cosf(a[j]);
         break;
       case node::type::log:
-#if defined(__FMA__)
+#if defined(GENETIC_FAST_MATH)
         if (fast_math) {
           float v[kBlock];
           #pragma GCC ivdep
@@ -375,18 +375,46 @@ namespace {
 float fused_score(const program &p, metric_t metric, const float *data,
                   const float *Y, const float *W, uint64_t n_samples,
                   float WS, eval_scratch &s) {
+  static const bool fast_math = detail::use_fast_math_blocks();
   float N = static_cast<float>(n_samples);
   float out = 0.0f;
+  float term[kBlock];
   for (uint64_t r0 = 0; r0 < n_samples; r0 += kBlock) {
     int n = static_cast<int>(std::min<uint64_t>(kBlock, n_samples - r0));
     const float *res = eval_block(p, data, n_samples, r0, n, s.buf, s.slot);
     if (metric == metric_t::mse) {
+      #pragma GCC ivdep
       for (int j = 0; j < n; ++j) {
         uint64_t i = r0 + j;
         float d = res[j] - Y[i];
         float error = N * W[i] * d * d / WS;
-        out += error / N;
+        term[j] = error / N;
       }
+#if defined(GENETIC_FAST_MATH)
+    } else if (fast_math) {
+      float e[kBlock], l[kBlock];
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j) {
+        float yp = res[j];
+        bool low = !(yp < -33.3) && yp <= -18;
+        e[j] = low ? yp : -yp;
+      }
+      detail::expf_block(e, e, n);
+      detail::log1pf_block(e, l, n);
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j) {
+        uint64_t i = r0 + j;
+        float yp = res[j];
+        float y = Y[i];
+        float w = W[i];
+        float logsig = yp < -33.3 ? yp
+                       : yp <= -18 ? yp - e[j]
+                       : yp <= 37  ? -l[j]
+                                   : -e[j];
+        float error = ((1 - y) * yp - logsig) * (N * w / WS);
+        term[j] = error / N;
+      }
+#endif
     } else {
       for (int j = 0; j < n; ++j) {
         uint64_t i = r0 + j;
@@ -403,9 +431,11 @@ float fused_score(const program &p, metric_t metric, const float *data,
         else
           logsig = -expf(-yp);
         float error = ((1 - y) * yp - logsig) * (N * w / WS);
-        out += error / N;
+        term[j] = error / N;
       }
     }
+    for (int j = 0; j < n; ++j)
+      out += term[j];
   }
   return out;
 }
