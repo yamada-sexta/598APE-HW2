@@ -4,6 +4,10 @@
  */
 
 #include <algorithm>
+#include <cerrno>
+#include <exception>
+#include <cstdlib>
+#include <iterator>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -25,6 +29,7 @@
 #include "genetic.h"
 #include "node.h"
 #include "program.h"
+#include "thread_pool.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -67,31 +72,74 @@ load_dataset(const std::string &filename) {
   std::vector<std::vector<float>> X;
   std::vector<float> y;
 
-  std::ifstream file(filename);
+  std::ifstream file(filename, std::ios::binary);
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open file: " + filename);
   }
+  std::string text((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  const char *const text_begin = text.c_str();
+  const char *const text_end = text_begin + text.size();
 
-  std::string line;
   // Skip header
-  std::getline(file, line);
+  const char *body = std::find(text_begin, text_end, '\n');
+  if (body != text_end)
+    ++body;
 
-  while (std::getline(file, line)) {
-    std::vector<float> row;
-    std::stringstream ss(line);
-    std::string value;
+  std::vector<const char *> starts{body};
+  for (const char *q = body + (1 << 16); q < text_end; q += 1 << 16) {
+    q = std::find(q, text_end, '\n');
+    if (q == text_end || q + 1 == text_end)
+      break;
+    starts.push_back(++q);
+  }
+  starts.push_back(text_end);
 
-    while (std::getline(ss, value, ',')) {
-      row.push_back(std::stof(value));
+  const int n_blocks = static_cast<int>(starts.size()) - 1;
+  std::vector<std::vector<std::vector<float>>> block_X(n_blocks);
+  std::vector<std::vector<float>> block_y(n_blocks);
+  std::vector<std::exception_ptr> errors(n_blocks);
+  genetic::thread_pool::instance().parallel_for(n_blocks, 1, [&](int blk) {
+    try {
+      const char *p = starts[blk];
+      const char *const end = starts[blk + 1];
+      while (p < end) {
+        const char *line_end = std::find(p, end, '\n');
+        std::vector<float> row;
+        while (p < line_end) {
+          const char *field_end = std::find(p, line_end, ',');
+          char *parsed;
+          errno = 0;
+          float v = std::strtof(p, &parsed);
+          if (parsed == p) {
+            throw std::invalid_argument("stof");
+          }
+          if (errno == ERANGE) {
+            throw std::out_of_range("stof");
+          }
+          row.push_back(v);
+          p = field_end + (field_end < line_end ? 1 : 0);
+        }
+        p = line_end + 1;
+
+        // Last column is target
+        block_y[blk].push_back(row.back());
+        row.pop_back();
+        block_X[blk].push_back(std::move(row));
+      }
+    } catch (...) {
+      errors[blk] = std::current_exception();
     }
-
-    // Last column is target
-    y.push_back(row.back());
-    row.pop_back();
-    X.push_back(row);
+  });
+  for (int blk = 0; blk < n_blocks; ++blk) {
+    if (errors[blk]) {
+      std::rethrow_exception(errors[blk]);
+    }
+    std::move(block_X[blk].begin(), block_X[blk].end(), std::back_inserter(X));
+    y.insert(y.end(), block_y[blk].begin(), block_y[blk].end());
   }
 
-  return {X, y};
+  return {std::move(X), std::move(y)};
 }
 
 // Convert 2D vector to column-major vector
@@ -502,10 +550,11 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
   ctimer_start(&end_to_end_timer);
 
   std::cout << ";;Loading " << png_file << std::endl;
-  std::vector<std::vector<float>> X = std::get<0>(utils::load_png(png_file));
-  std::vector<float> r = std::get<1>(utils::load_png(png_file));
-  std::vector<float> g = std::get<2>(utils::load_png(png_file));
-  std::vector<float> b = std::get<3>(utils::load_png(png_file));
+  auto image = utils::load_png(png_file);
+  std::vector<std::vector<float>> X = std::move(std::get<0>(image));
+  std::vector<float> r = std::move(std::get<1>(image));
+  std::vector<float> g = std::move(std::get<2>(image));
+  std::vector<float> b = std::move(std::get<3>(image));
   const bool monochrome = (r == g && g == b);
   // Use the same [-pi, pi] coordinate domain for every input image.
   // Exported channel functions still accept normalized (x,y) coordinates.
@@ -576,38 +625,60 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
             << " generations per model\n";
 
   const int channel_count = monochrome ? 1 : 3;
+
+  struct model_result {
+    std::string report;
+    std::vector<float> predictions;
+  };
+  std::vector<model_result> results(channel_count * K);
+  genetic::thread_pool::instance().parallel_for(
+      channel_count * K, 1,
+      [&](int task) {
+        const int channel = task / K, model = task % K;
+        const auto &y_train = channel_splits[channel]->first;
+        const auto &y_test = channel_splits[channel]->second;
+        genetic::param model_params = params;
+        model_params.random_state =
+            base_seed + static_cast<uint32_t>(channel) * K + model;
+        genetic::program_t final_programs =
+            new genetic::program[model_params.population_size]();
+        std::vector<std::vector<genetic::program>> history;
+        genetic::symFit(X_train_flat.data(), y_train.data(),
+                        sample_weights.data(), X_train.size(),
+                        model_params.num_features, model_params,
+                        final_programs, history);
+        insertionSortPrograms(final_programs, model_params.population_size);
+        genetic::program_t best_program = &final_programs[0];
+
+        std::vector<float> predictions(X_test.size());
+        genetic::symRegPredict(X_test_flat.data(), X_test.size(), best_program,
+                               predictions.data());
+        std::ostringstream report;
+        report << std::setprecision(std::cout.precision());
+        report << ";; " << channel_names[channel] << " model " << model
+               << ", seed " << model_params.random_state << ", training MSE "
+               << best_program->raw_fitness_ << ", test MSE "
+               << utils::mean_squared_error(y_test, predictions) << ", nodes "
+               << best_program->len << "\n";
+        // stringify returns a lambda; apply it to X inside define-channel.
+        report << "  (" << genetic::stringify(*best_program)
+               << " (model-input X))\n";
+        results[task] = {report.str(), std::move(predictions)};
+        delete[] final_programs;
+      },
+       false);
+
   for (int channel = 0; channel < channel_count; ++channel) {
-    const auto &y_train = channel_splits[channel]->first;
     const auto &y_test = channel_splits[channel]->second;
     std::vector<float> average_predictions(X_test.size(), 0.0f);
     std::cout << "(define-channel (" << channel_names[channel] << " X)\n";
 
     for (int model = 0; model < K; ++model) {
-      params.random_state =
-          base_seed + static_cast<uint32_t>(channel) * K + model;
-      genetic::program_t final_programs =
-          new genetic::program[params.population_size]();
-      std::vector<std::vector<genetic::program>> history;
-      genetic::symFit(X_train_flat.data(), y_train.data(),
-                      sample_weights.data(), X_train.size(),
-                      params.num_features, params, final_programs, history);
-      insertionSortPrograms(final_programs, params.population_size);
-      genetic::program_t best_program = &final_programs[0];
-
-      std::vector<float> predictions(X_test.size());
-      genetic::symRegPredict(X_test_flat.data(), X_test.size(), best_program,
-                             predictions.data());
-      for (size_t i = 0; i < predictions.size(); ++i) {
-        average_predictions[i] += predictions[i] / K;
+      const model_result &r = results[channel * K + model];
+      for (size_t i = 0; i < r.predictions.size(); ++i) {
+        average_predictions[i] += r.predictions[i] / K;
       }
-      std::cout << ";; " << channel_names[channel] << " model " << model
-                << ", seed " << params.random_state << ", training MSE "
-                << best_program->raw_fitness_ << ", test MSE "
-                << utils::mean_squared_error(y_test, predictions) << ", nodes "
-                << best_program->len << "\n";
-      // stringify returns a lambda; apply it to X inside define-channel.
-      std::cout << "  (" << genetic::stringify(*best_program) << " (model-input X))\n";
-      delete[] final_programs;
+      std::cout << r.report;
     }
     std::cout << ")\n";
     float mse = utils::mean_squared_error(y_test, average_predictions);

@@ -44,7 +44,11 @@ typedef struct {
     uint32_t buf_len;
 } philox_state_t;
 
-extern philox_state_t global_philox_state;
+#ifdef __cplusplus
+extern thread_local philox_state_t global_philox_state;
+#else
+extern _Thread_local philox_state_t global_philox_state;
+#endif
 
 /* Function prototypes */
 void philox_seed(uint32_t seed);

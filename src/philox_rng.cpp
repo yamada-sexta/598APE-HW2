@@ -1,7 +1,7 @@
 #include <philox_rng.h>
 #include <math.h>
 
-philox_state_t global_philox_state = {
+thread_local philox_state_t global_philox_state = {
     .counter = {1, 2, 3, 3},
     .key = {56, 712},
     .initialized = false,
