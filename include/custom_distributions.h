@@ -24,6 +24,7 @@ public:
     // Calculate the largest multiple of 'range' that fits in a uint32_t.
     limit_ = std::numeric_limits<uint32_t>::max() -
              (std::numeric_limits<uint32_t>::max() % range_);
+    fastmod_m_ = UINT64_C(0xFFFFFFFFFFFFFFFF) / range_ + 1;
   }
 
   // When called with a random engine, returns a uniformly distributed integer.
@@ -34,7 +35,10 @@ public:
     do {
       x = eng();
     } while (x >= limit_);
-    return a_ + static_cast<result_type>(x % range_);
+    uint64_t low = fastmod_m_ * x;
+    uint32_t mod = static_cast<uint32_t>(
+        (static_cast<unsigned __int128>(low) * range_) >> 64);
+    return a_ + static_cast<result_type>(mod);
   }
 
 private:
@@ -42,6 +46,7 @@ private:
   result_type b_;
   uint32_t range_;
   uint32_t limit_;
+  uint64_t fastmod_m_;
 };
 
 // Custom uniform real distribution mapping the raw uint32_t to a double in [0,

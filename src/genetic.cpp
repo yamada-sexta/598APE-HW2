@@ -38,39 +38,36 @@ void tournament_kernel(const std::vector<program> &progs, int *win_indices,
   PhiloxEngine gen(seed);
   uniform_int_distribution_custom<int> rng(0, n_progs - 1);
 
-  for (auto idx = 0; idx < n_tours; ++idx) {
-    int r;
-    r = rng(gen);
+  static thread_local std::vector<float> score;
+  score.resize(n_progs);
+  for (int i = 0; i < n_progs; ++i) {
+    float penalty = parsimony * progs[i].len * (2 * criterion - 1);
+    score[i] = progs[i].raw_fitness_ - penalty;
+  }
 
-    int opt = r;
-    float opt_penalty = parsimony * progs[opt].len * (2 * criterion - 1);
-    float opt_score = progs[opt].raw_fitness_ - opt_penalty;
+  auto run = [&](auto better) {
+    for (auto idx = 0; idx < n_tours; ++idx) {
+      int opt = rng(gen);
+      float opt_score = score[opt];
 
-    for (int s = 1; s < tour_size; ++s) {
-      r = rng(gen);
-      int curr = r;
-      float curr_penalty = parsimony * progs[curr].len * (2 * criterion - 1);
-      float curr_score = progs[curr].raw_fitness_ - curr_penalty;
-
-      if (criterion) {
-        // max score
-        if (opt_score < curr_score) {
-          opt = curr;
-          opt_penalty = curr_penalty;
-          opt_score = curr_score;
-        }
-      } else {
-        // min score
-        if (opt_score > curr_score) {
-          opt = curr;
-          opt_penalty = curr_penalty;
-          opt_score = curr_score;
-        }
+      for (int s = 1; s < tour_size; ++s) {
+        int curr = rng(gen);
+        float curr_score = score[curr];
+        bool b = better(curr_score, opt_score);
+        opt = b ? curr : opt;
+        opt_score = b ? curr_score : opt_score;
       }
-    }
 
-    // Set win index
-    win_indices[idx] = opt;
+      // Set win index
+      win_indices[idx] = opt;
+    }
+  };
+  if (criterion) {
+    // max score
+    run([](float curr, float opt) { return opt < curr; });
+  } else {
+    // min score
+    run([](float curr, float opt) { return opt > curr; });
   }
 }
 

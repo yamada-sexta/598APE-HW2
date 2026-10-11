@@ -42,12 +42,15 @@ $(BENCH_BIN): $(BENCH_SRC) $(OBJS)
 check-math: tests/check_fast_math.cpp $(SRC_DIR)/fast_math.h
 	@$(CXX) $(CXXFLAGS) $< -o check_fast_math && ./check_fast_math
 
+check-rng: tests/check_rng.cpp $(SRC_DIR)/philox_rng.cpp include/philox_engine.h include/custom_distributions.h
+	@$(CXX) $(CXXFLAGS) $< $(SRC_DIR)/philox_rng.cpp -o check_rng && ./check_rng
+
 # Clean build files
 clean:
 	@echo "Cleaning build files..."
-	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d check_fast_math check_fast_math.d
+	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d check_fast_math check_fast_math.d check_rng check_rng.d
 
 # Clean and rebuild
 rebuild: clean all
 
-.PHONY: all clean rebuild directories check-math
+.PHONY: all clean rebuild directories check-math check-rng

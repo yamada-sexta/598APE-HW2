@@ -4,7 +4,10 @@
 philox_state_t global_philox_state = {
     .counter = {1, 2, 3, 3},
     .key = {56, 712},
-    .initialized = false
+    .initialized = false,
+    .buf = {0},
+    .buf_pos = 0,
+    .buf_len = 0
 };
 
 /* Helper function to return the lower and higher 32-bits from two 32-bit
@@ -49,6 +52,7 @@ void philox_seed(uint32_t seed) {
     global_philox_state.key[0] = PHILOX_W32A;
     global_philox_state.key[1] = PHILOX_W32B;
     global_philox_state.initialized = true;
+    global_philox_state.buf_pos = global_philox_state.buf_len = 0;
 }
 
 /* Seed the RNG with a value and custom keys */
@@ -60,6 +64,7 @@ void philox_seed_with_key(uint32_t seed, uint32_t key0, uint32_t key1) {
     global_philox_state.key[0] = key0;
     global_philox_state.key[1] = key1;
     global_philox_state.initialized = true;
+    global_philox_state.buf_pos = global_philox_state.buf_len = 0;
 }
 
 /* Reset the RNG to its default state */
@@ -71,6 +76,7 @@ void philox_reset(void) {
     global_philox_state.key[0] = 56;
     global_philox_state.key[1] = 712;
     global_philox_state.initialized = true;
+    global_philox_state.buf_pos = global_philox_state.buf_len = 0;
 }
 
 /* Skip the specified number of samples of 128-bits in the current stream. */
@@ -78,6 +84,8 @@ void philox_skip(uint64_t count) {
     if (!global_philox_state.initialized) {
         philox_reset();
     }
+
+    global_philox_state.buf_pos = global_philox_state.buf_len = 0;
 
     const uint32_t count_lo = (uint32_t)count;
     uint32_t count_hi = (uint32_t)(count >> 32);

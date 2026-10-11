@@ -35,3 +35,4 @@ compile_commands.json
 .cache/
 genetic_benchmark
 check_fast_math
+check_rng
