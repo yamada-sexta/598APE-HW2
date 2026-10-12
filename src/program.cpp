@@ -14,7 +14,7 @@
 #include <random>
 #include <cstring>
 #include <stack>
-#include <unordered_map>
+#include <climits>
 
 namespace genetic {
 
@@ -444,21 +444,7 @@ float fused_score(const program &p, metric_t metric, const float *data,
 
 namespace {
 
-struct prog_key {
-  const node *nodes;
-  int len;
-  uint64_t hash;
-  bool operator==(const prog_key &o) const {
-    return len == o.len && hash == o.hash &&
-           std::memcmp(nodes, o.nodes, sizeof(node) * len) == 0;
-  }
-};
-
-struct prog_key_hash {
-  size_t operator()(const prog_key &k) const { return k.hash; }
-};
-
-prog_key make_key(const program &p) {
+uint64_t hash_nodes(const program &p) {
   static_assert(sizeof(node) == 8, "node is hashed as 8 raw bytes");
   uint64_t h = 1469598103934665603ull ^ static_cast<uint64_t>(p.len);
   for (int i = 0; i < p.len; ++i) {
@@ -467,8 +453,51 @@ prog_key make_key(const program &p) {
     h = (h ^ w) * 1099511628211ull;
     h ^= h >> 29;
   }
-  return prog_key{p.nodes, p.len, h};
+  return h;
 }
+
+class program_set {
+public:
+  program_set(const std::vector<program> &curr,
+              const std::vector<program> *prev, int capacity_hint)
+      : curr_(curr), prev_(prev) {
+    size_t cap = 16;
+    while (cap < 2 * static_cast<size_t>(capacity_hint))
+      cap <<= 1;
+    mask_ = cap - 1;
+    slots_.assign(cap, kEmpty);
+    hashes_.assign(cap, 0);
+  }
+
+  int find_or_insert(int id, uint64_t hash) {
+    const program &p = get(id);
+    for (size_t pos = hash & mask_;; pos = (pos + 1) & mask_) {
+      int other = slots_[pos];
+      if (other == kEmpty) {
+        slots_[pos] = id;
+        hashes_[pos] = hash;
+        return id;
+      }
+      if (hashes_[pos] == hash) {
+        const program &q = get(other);
+        if (q.len == p.len &&
+            std::memcmp(q.nodes, p.nodes, sizeof(node) * p.len) == 0)
+          return other;
+      }
+    }
+  }
+
+private:
+  static constexpr int kEmpty = INT32_MIN;
+  const program &get(int id) const {
+    return id >= 0 ? curr_[id] : (*prev_)[-1 - id];
+  }
+  const std::vector<program> &curr_;
+  const std::vector<program> *prev_;
+  size_t mask_;
+  std::vector<int> slots_;
+  std::vector<uint64_t> hashes_;
+};
 
 }
 
@@ -485,20 +514,22 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
                          const param &params, const int n_rows,
                          const float *data, const float *y,
                          const float *sample_weights) {
-  std::unordered_map<prog_key, int, prog_key_hash> seen;
-  seen.reserve(2 * n_progs);
+  const int n_prev =
+      prev_progs != nullptr ? static_cast<int>(prev_progs->size()) : 0;
+  program_set seen(h_progs, prev_progs, n_prev + n_progs);
   std::vector<int> source(n_progs);
   std::vector<int> work;
   work.reserve(n_progs);
-  if (prev_progs != nullptr) {
-    for (int i = 0; i < static_cast<int>(prev_progs->size()); ++i) {
-      seen.emplace(make_key((*prev_progs)[i]), -1 - i);
-    }
+  std::vector<uint64_t> hashes(n_prev + n_progs);
+  thread_pool::instance().parallel_for(n_prev + n_progs, 256, [&](int i) {
+    hashes[i] = hash_nodes(i < n_prev ? (*prev_progs)[i] : h_progs[i - n_prev]);
+  });
+  for (int i = 0; i < n_prev; ++i) {
+    seen.find_or_insert(-1 - i, hashes[i]);
   }
   for (int pid = 0; pid < n_progs; ++pid) {
-    auto it = seen.emplace(make_key(h_progs[pid]), pid);
-    source[pid] = it.first->second;
-    if (it.second || source[pid] == pid) {
+    source[pid] = seen.find_or_insert(pid, hashes[n_prev + pid]);
+    if (source[pid] == pid) {
       work.push_back(pid);
     }
   }
