@@ -598,37 +598,30 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
   uniform_real_distribution_custom<float> dist_uniform(0.0f, 1.0f);
   float bound = dist_uniform(rng);
 
-  // Specify subtree start probs acc to Koza's selection approach
-  static thread_local std::vector<float> node_probs;
-  node_probs.assign(len, 0.1);
   float sum = 0.1 * len;
-
   for (int i = 0; i < len; ++i) {
-    if (pnodes[i].is_nonterminal()) {
-      node_probs[i] = 0.9;
+    if (detail::is_nonterminal(pnodes[i].t)) {
       sum += 0.8;
     }
   }
+  const float p_terminal = static_cast<float>(0.1) / sum;
+  const float p_function = static_cast<float>(0.9) / sum;
 
-  // Normalize vector
+  start = len;
+  float cumulative = 0.0f;
   for (int i = 0; i < len; ++i) {
-    node_probs[i] /= sum;
+    cumulative += detail::is_nonterminal(pnodes[i].t) ? p_function : p_terminal;
+    if (!(cumulative < bound)) {
+      start = i;
+      break;
+    }
   }
-
-  // Compute cumulative sum
-  std::partial_sum(node_probs.begin(), node_probs.end(), node_probs.begin());
-
-  start = std::lower_bound(node_probs.begin(), node_probs.end(), bound) -
-          node_probs.begin();
   end = start;
 
   // Iterate until all function arguments are satisfied in current subtree
   int num_args = 1;
   while (num_args > end - start) {
-    node curr;
-    curr = pnodes[end];
-    if (curr.is_nonterminal())
-      num_args += curr.arity();
+    num_args += detail::arity(pnodes[end].t);
     ++end;
   }
 
@@ -647,8 +640,8 @@ int get_depth(const program &p_out) {
     depth = std::max(depth, sz);
 
     // Update stack
-    if (curr.is_nonterminal()) {
-      arity_stack.push_back(curr.arity());
+    if (detail::is_nonterminal(curr.t)) {
+      arity_stack.push_back(detail::arity(curr.t));
     } else {
       // Only triggered for a depth 0 node
       if (arity_stack.empty())
