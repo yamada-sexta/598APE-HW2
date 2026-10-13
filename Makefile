@@ -30,7 +30,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@echo "Compiling $<..."
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(OBJ_DIR)/fast_math.o: CXXFLAGS += -fno-trapping-math
+$(OBJ_DIR)/fast_math.o: CXXFLAGS += -fno-trapping-math -mprefer-vector-width=512
 
 $(OBJS): Makefile
 
