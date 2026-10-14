@@ -15,6 +15,8 @@
 #include <cstring>
 #include <stack>
 #include <climits>
+#include <memory>
+#include <mutex>
 
 namespace genetic {
 
@@ -528,25 +530,198 @@ void add_rows_in_order(const float *const *t, int count, uint64_t n,
     sums[q] = s[q];
 }
 
-void score_group(std::vector<program> &progs, const int *pids, int count,
-                 metric_t metric, const float *data, const float *Y,
-                 const float *W, uint64_t n_samples, float WS,
-                 uint64_t r_begin, uint64_t r_end, float *terms) {
-  static thread_local subtree_dag dag;
-  static thread_local std::vector<int> roots;
+struct feature_domains {
+  static constexpr size_t kMaxValues = 4096;
+  std::vector<std::vector<float>> values;
+  std::vector<std::vector<int32_t>> index;
+  size_t max_values = 0;
+};
+
+std::shared_ptr<const feature_domains>
+get_feature_domains(const float *data, uint64_t rows, int n_features) {
+  uint64_t h = 1469598103934665603ull;
+  const uint64_t n_values = rows * static_cast<uint64_t>(n_features);
+  for (uint64_t i = 0; i < n_values; ++i) {
+    uint32_t w;
+    std::memcpy(&w, data + i, sizeof(w));
+    h = (h ^ w) * 1099511628211ull;
+  }
+  struct entry {
+    const float *data;
+    uint64_t rows;
+    int n_features;
+    uint64_t hash;
+    std::shared_ptr<const feature_domains> domains;
+  };
+  static std::mutex mutex;
+  static std::vector<entry> cache;
+  std::lock_guard<std::mutex> lock(mutex);
+  for (const entry &e : cache) {
+    if (e.data == data && e.rows == rows && e.n_features == n_features &&
+        e.hash == h)
+      return e.domains;
+  }
+
+  auto fd = std::make_shared<feature_domains>();
+  fd->values.resize(n_features);
+  fd->index.resize(n_features);
+  const size_t limit = std::min<size_t>(feature_domains::kMaxValues, rows / 8);
+  std::vector<int32_t> table(1 << 14);
+  for (int f = 0; f < n_features; ++f) {
+    const float *col = data + rows * f;
+    std::vector<float> &vals = fd->values[f];
+    std::vector<int32_t> &idx = fd->index[f];
+    std::fill(table.begin(), table.end(), -1);
+    idx.resize(rows);
+    bool ok = limit > 0;
+    for (uint64_t r = 0; r < rows && ok; ++r) {
+      uint32_t w;
+      std::memcpy(&w, col + r, sizeof(w));
+      size_t pos = (w * 0x9E3779B1u) >> 18;
+      for (;; pos = (pos + 1) & (table.size() - 1)) {
+        int32_t v = table[pos];
+        if (v < 0) {
+          if (vals.size() == limit) {
+            ok = false;
+            break;
+          }
+          table[pos] = static_cast<int32_t>(vals.size());
+          idx[r] = static_cast<int32_t>(vals.size());
+          vals.push_back(col[r]);
+          break;
+        }
+        if (std::memcmp(&vals[v], col + r, sizeof(float)) == 0) {
+          idx[r] = v;
+          break;
+        }
+      }
+    }
+    if (!ok) {
+      vals.clear();
+      idx.clear();
+    }
+    fd->max_values = std::max(fd->max_values, vals.size());
+  }
+  if (cache.size() >= 8)
+    cache.erase(cache.begin());
+  cache.push_back(entry{data, rows, n_features, h, fd});
+  return fd;
+}
+
+struct group_plan {
+  enum kind_t : uint8_t { CONST, TABLE, BLOCK };
+  subtree_dag dag;
+  std::vector<int> roots;
+  std::vector<int> feature;
+  std::vector<kind_t> kind;
+  std::vector<char> per_row;
+  std::vector<size_t> table_at;
+  std::vector<float> tables;
+  std::vector<const float *> table;
+
+  void build(const std::vector<program> &progs, const int *pids, int count,
+             const feature_domains &fd, const float *data,
+             uint64_t n_samples) {
+    size_t total = 0;
+    for (int k = 0; k < count; ++k)
+      total += progs[pids[k]].len;
+    dag.clear(total);
+    roots.resize(count);
+    for (int k = 0; k < count; ++k)
+      roots[k] = dag.add(progs[pids[k]]);
+    const int m = dag.size();
+
+    feature.resize(m);
+    kind.resize(m);
+    per_row.assign(m, 0);
+    for (int id = 0; id < m; ++id) {
+      const node &nd = dag.op(id);
+      int f;
+      if (nd.t == node::type::variable) {
+        f = nd.u.fid;
+      } else if (nd.t == node::type::constant) {
+        f = -1;
+      } else {
+        f = feature[dag.arg0(id)];
+        int a1 = dag.arg1(id);
+        if (a1 >= 0) {
+          int g = feature[a1];
+          f = f == -1 ? g : (g == -1 || g == f ? f : -2);
+        }
+      }
+      feature[id] = f;
+      kind[id] = f == -1                           ? CONST
+                 : f >= 0 && !fd.values[f].empty() ? TABLE
+                                                   : BLOCK;
+      if (kind[id] == BLOCK && nd.t != node::type::variable) {
+        per_row[dag.arg0(id)] = 1;
+        if (dag.arg1(id) >= 0)
+          per_row[dag.arg1(id)] = 1;
+      }
+    }
+    for (int k = 0; k < count; ++k)
+      per_row[roots[k]] = 1;
+
+    const size_t const_len = std::max<size_t>(1, fd.max_values);
+    table.resize(m);
+    table_at.resize(m);
+    size_t table_size = 0;
+    for (int id = 0; id < m; ++id) {
+      if (kind[id] == CONST ||
+          (kind[id] == TABLE && dag.op(id).t != node::type::variable)) {
+        table_at[id] = table_size;
+        table_size +=
+            kind[id] == CONST ? const_len : fd.values[feature[id]].size();
+      }
+    }
+    tables.resize(table_size);
+    for (int id = 0; id < m; ++id) {
+      const node &nd = dag.op(id);
+      if (kind[id] == BLOCK)
+        continue;
+      if (nd.t == node::type::variable) {
+        table[id] = fd.values[nd.u.fid].data();
+        continue;
+      }
+      float *o = tables.data() + table_at[id];
+      size_t len =
+          kind[id] == CONST ? const_len : fd.values[feature[id]].size();
+      if (nd.t == node::type::constant) {
+        std::fill(o, o + len, nd.u.val);
+      } else {
+        int a1 = dag.arg1(id);
+        for (size_t c = 0; c < len; c += kBlock) {
+          int n = static_cast<int>(std::min<size_t>(kBlock, len - c));
+          apply_function(nd, table[dag.arg0(id)] + c,
+                         a1 >= 0 ? table[a1] + c : nullptr, o + c, n, data,
+                         n_samples, 0);
+        }
+      }
+      table[id] = o;
+    }
+  }
+};
+
+void score_rows(const group_plan &plan, std::vector<program> &progs,
+                const int *pids, metric_t metric, const float *data,
+                const float *Y, const float *W, uint64_t n_samples, float WS,
+                uint64_t r_begin, uint64_t r_end, float *terms,
+                const feature_domains &fd) {
   static thread_local std::vector<float> arena, sums;
   static thread_local std::vector<const float *> value;
-
-  size_t total = 0;
-  for (int k = 0; k < count; ++k)
-    total += progs[pids[k]].len;
-  dag.clear(total);
-  roots.resize(count);
-  for (int k = 0; k < count; ++k)
-    roots[k] = dag.add(progs[pids[k]]);
+  const subtree_dag &dag = plan.dag;
   const int m = dag.size();
+  const int count = static_cast<int>(plan.roots.size());
+
   arena.resize(static_cast<size_t>(m) * kBlock);
   value.resize(m);
+  for (int id = 0; id < m; ++id) {
+    if (plan.kind[id] == group_plan::CONST && plan.per_row[id]) {
+      float *o = arena.data() + static_cast<size_t>(id) * kBlock;
+      std::fill(o, o + kBlock, plan.table[id][0]);
+      value[id] = o;
+    }
+  }
   sums.assign(count, 0.0f);
 
   const float N = static_cast<float>(n_samples);
@@ -554,15 +729,19 @@ void score_group(std::vector<program> &progs, const int *pids, int count,
     int n = static_cast<int>(std::min<uint64_t>(kBlock, r_end - r0));
     for (int id = 0; id < m; ++id) {
       const node &nd = dag.op(id);
-      float *o = arena.data() + static_cast<size_t>(id) * kBlock;
       if (nd.t == node::type::variable) {
         value[id] = data + n_samples * nd.u.fid + r0;
         continue;
       }
-      if (nd.t == node::type::constant) {
-        float v = nd.u.val;
+      if (plan.kind[id] == group_plan::CONST || !plan.per_row[id])
+        continue;
+      float *o = arena.data() + static_cast<size_t>(id) * kBlock;
+      if (plan.kind[id] == group_plan::TABLE) {
+        const float *t = plan.table[id];
+        const int32_t *ix = fd.index[plan.feature[id]].data() + r0;
+        #pragma GCC ivdep
         for (int j = 0; j < n; ++j)
-          o[j] = v;
+          o[j] = t[ix[j]];
       } else {
         int a1 = dag.arg1(id);
         apply_function(nd, value[dag.arg0(id)],
@@ -574,7 +753,7 @@ void score_group(std::vector<program> &progs, const int *pids, int count,
 
     if (terms != nullptr) {
       for (int k = 0; k < count; ++k)
-        block_terms(metric, value[roots[k]], Y, W, r0, n, N, WS,
+        block_terms(metric, value[plan.roots[k]], Y, W, r0, n, N, WS,
                     terms + static_cast<size_t>(k) * n_samples + r0);
       continue;
     }
@@ -583,7 +762,7 @@ void score_group(std::vector<program> &progs, const int *pids, int count,
     for (int k0 = 0; k0 < count; k0 += 8) {
       int kn = std::min(8, count - k0);
       for (int q = 0; q < kn; ++q) {
-        block_terms(metric, value[roots[k0 + q]], Y, W, r0, n, N, WS,
+        block_terms(metric, value[plan.roots[k0 + q]], Y, W, r0, n, N, WS,
                     term[q]);
         term_ptr[q] = term[q];
       }
@@ -754,6 +933,9 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
   std::stable_sort(groups.begin(), groups.end(),
                    [](const group &a, const group &b) { return a.cost > b.cost; });
 
+  const std::shared_ptr<const feature_domains> domains =
+      get_feature_domains(data, rows, params.num_features);
+
   const int threads = thread_pool::instance().size();
   const uint64_t n_blocks = (rows + kBlock - 1) / kBlock;
   uint64_t segments = 1;
@@ -764,31 +946,44 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
   }
   const uint64_t seg_rows = (n_blocks + segments - 1) / segments * kBlock;
   segments = (rows + seg_rows - 1) / seg_rows;
+  static thread_local std::vector<group_plan> plan_storage;
+  if (plan_storage.size() < groups.size())
+    plan_storage.resize(groups.size());
+  group_plan *const plans = plan_storage.data();
   if (segments <= 1) {
     thread_pool::instance().parallel_for(
         static_cast<int>(groups.size()), 1, [&](int gi) {
       const group &g = groups[gi];
-      score_group(h_progs, dag_work.data() + g.begin, g.count, params.metric,
-                  data, y, sample_weights, rows, WS, 0, rows, nullptr);
+      const int *pids = dag_work.data() + g.begin;
+      plans[gi].build(h_progs, pids, g.count, *domains, data, rows);
+      score_rows(plans[gi], h_progs, pids, params.metric, data, y,
+                 sample_weights, rows, WS, 0, rows, nullptr, *domains);
     });
   } else {
+    thread_pool::instance().parallel_for(
+        static_cast<int>(groups.size()), 1, [&](int gi) {
+      const group &g = groups[gi];
+      plans[gi].build(h_progs, dag_work.data() + g.begin, g.count, *domains,
+                      data, rows);
+    });
     static thread_local std::vector<float> terms_storage;
     terms_storage.resize(dag_work.size() * rows);
     float *const terms = terms_storage.data();
     const int n_tasks = static_cast<int>(groups.size() * segments);
     thread_pool::instance().parallel_for(n_tasks, 1, [&](int task) {
-      const group &g = groups[task / segments];
+      const int gi = static_cast<int>(task / segments);
+      const group &g = groups[gi];
       uint64_t r_begin = (task % segments) * seg_rows;
       uint64_t r_end = std::min(rows, r_begin + seg_rows);
-      score_group(h_progs, dag_work.data() + g.begin, g.count, params.metric,
-                  data, y, sample_weights, rows, WS, r_begin, r_end,
-                  terms + static_cast<size_t>(g.begin) * rows);
+      score_rows(plans[gi], h_progs, dag_work.data() + g.begin, params.metric,
+                 data, y, sample_weights, rows, WS, r_begin, r_end,
+                 terms + static_cast<size_t>(g.begin) * rows, *domains);
     });
     const int n_sum_tasks = (static_cast<int>(dag_work.size()) + 7) / 8;
     thread_pool::instance().parallel_for(n_sum_tasks, 1, [&](int task) {
       int k0 = task * 8;
       int kn = std::min(8, static_cast<int>(dag_work.size()) - k0);
-      const float *t[8];
+      const float *t[8] = {};
       float sums[8] = {};
       for (int q = 0; q < kn; ++q)
         t[q] = terms + static_cast<size_t>(k0 + q) * rows;
@@ -805,7 +1000,7 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
     program &p = h_progs[single_work[w]];
     y_pred.resize(rows);
     execute_one(p, data, rows, y_pred.data(), s);
-    float score;
+    float score = 0.0f;
     compute_metric(n_rows, 1, y, y_pred.data(), sample_weights, &score,
                    params);
     p.raw_fitness_ = score;

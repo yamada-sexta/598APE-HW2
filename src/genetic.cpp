@@ -147,14 +147,28 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
 
     // Perform host mutations
 
-    auto donor_pos = n_progs;
+    std::vector<int> donor_of(n_progs, -1);
+    for (int pos = 0, donor_pos = n_progs; pos < n_progs; ++pos) {
+      if (h_nextprogs[pos].mut_type == mutation_t::crossover)
+        donor_of[pos] = d_win_indices[donor_pos++];
+    }
+    constexpr int kAhead = 8;
+    auto prefetch_nodes = [&](int index) {
+      const program &p = h_oldprogs[index];
+      for (int i = 0; i < std::min(p.len, 32); i += 8)
+        __builtin_prefetch(p.nodes + i);
+    };
     for (auto pos = 0; pos < n_progs; ++pos) {
       auto parent_index = d_win_indices[pos];
+      if (pos + kAhead < n_progs) {
+        prefetch_nodes(d_win_indices[pos + kAhead]);
+        if (donor_of[pos + kAhead] >= 0)
+          prefetch_nodes(donor_of[pos + kAhead]);
+      }
 
       if (h_nextprogs[pos].mut_type == mutation_t::crossover) {
         // Get secondary index
-        auto donor_index = d_win_indices[donor_pos];
-        donor_pos++;
+        auto donor_index = donor_of[pos];
         crossover(h_oldprogs[parent_index], h_oldprogs[donor_index],
                   h_nextprogs[pos], params, h_gen);
       } else if (h_nextprogs[pos].mut_type == mutation_t::subtree) {
