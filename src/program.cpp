@@ -74,10 +74,134 @@ bool fits_block_stack(const program &p) {
   return sp >= 1;
 }
 
+void apply_function(const node &nd, const float *a, const float *b, float *o,
+                    int n, const float *data, uint64_t stride, uint64_t r0) {
+  static const bool fast_math = detail::use_fast_math_blocks();
+  if (detail::arity(nd.t) == 1) {
+    switch (nd.t) {
+    case node::type::abs:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = fabsf(a[j]);
+      break;
+    case node::type::sin:
+#if defined(GENETIC_FAST_MATH)
+      if (fast_math) {
+        detail::sinf_block(a, o, n);
+        break;
+      }
+#endif
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = sinf(a[j]);
+      break;
+    case node::type::cos:
+#if defined(GENETIC_FAST_MATH)
+      if (fast_math) {
+        detail::cosf_block(a, o, n);
+        break;
+      }
+#endif
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = cosf(a[j]);
+      break;
+    case node::type::log:
+#if defined(GENETIC_FAST_MATH)
+      if (fast_math) {
+        float v[kBlock];
+        #pragma GCC ivdep
+        for (int j = 0; j < n; ++j) {
+          float m = fabsf(a[j]);
+          v[j] = m < detail::MIN_VAL ? 1.0f : m;
+        }
+        detail::logf_block(v, v, n);
+        #pragma GCC ivdep
+        for (int j = 0; j < n; ++j)
+          o[j] = fabsf(a[j]) < detail::MIN_VAL ? 0.f : v[j];
+        break;
+      }
+#endif
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j) {
+        float v = fabsf(a[j]);
+        o[j] = v < detail::MIN_VAL ? 0.f : logf(v);
+      }
+      break;
+    case node::type::sq:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] * a[j];
+      break;
+    case node::type::sqrt:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = sqrtf(fabsf(a[j]));
+      break;
+    case node::type::neg:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = -a[j];
+      break;
+    case node::type::cube:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] * a[j] * a[j];
+      break;
+    default:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j) {
+        float in[2] = {a[j], 0.0f};
+        o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
+      }
+      break;
+    }
+  } else {
+    switch (nd.t) {
+    case node::type::add:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] + b[j];
+      break;
+    case node::type::sub:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] - b[j];
+      break;
+    case node::type::mul:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] * b[j];
+      break;
+    case node::type::div:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = fabsf(b[j]) < detail::MIN_VAL ? 1.0f : a[j] / b[j];
+      break;
+    case node::type::fdim:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] <= b[j] ? 0.0f : a[j] - b[j];
+      break;
+    case node::type::gt:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j)
+        o[j] = a[j] > b[j] ? 1.0f : 0.0f;
+      break;
+    default:
+      #pragma GCC ivdep
+      for (int j = 0; j < n; ++j) {
+        float in[2] = {a[j], b[j]};
+        o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
+      }
+      break;
+    }
+  }
+}
+
 const float *eval_block(const program &p, const float *data, uint64_t stride,
                         uint64_t r0, int n,
                         float (*buf)[kBlock], const float **slot) {
-  static const bool fast_math = detail::use_fast_math_blocks();
   int sp = 0;
   for (int i = p.len - 1; i >= 0; --i) {
     const node &nd = p.nodes[i];
@@ -88,7 +212,6 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
     case node::type::constant: {
       float v = nd.u.val;
       float *o = buf[sp];
-      #pragma GCC ivdep
       for (int j = 0; j < n; ++j)
         o[j] = v;
       slot[sp++] = o;
@@ -99,131 +222,13 @@ const float *eval_block(const program &p, const float *data, uint64_t stride,
     }
 
     if (detail::arity(nd.t) == 1) {
-      const float *a = slot[sp - 1];
-      float *o = buf[sp - 1];
-      switch (nd.t) {
-      case node::type::abs:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = fabsf(a[j]);
-        break;
-      case node::type::sin:
-#if defined(GENETIC_FAST_MATH)
-        if (fast_math) {
-          detail::sinf_block(a, o, n);
-          break;
-        }
-#endif
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = sinf(a[j]);
-        break;
-      case node::type::cos:
-#if defined(GENETIC_FAST_MATH)
-        if (fast_math) {
-          detail::cosf_block(a, o, n);
-          break;
-        }
-#endif
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = cosf(a[j]);
-        break;
-      case node::type::log:
-#if defined(GENETIC_FAST_MATH)
-        if (fast_math) {
-          float v[kBlock];
-          #pragma GCC ivdep
-          for (int j = 0; j < n; ++j) {
-            float m = fabsf(a[j]);
-            v[j] = m < detail::MIN_VAL ? 1.0f : m;
-          }
-          detail::logf_block(v, v, n);
-          #pragma GCC ivdep
-          for (int j = 0; j < n; ++j)
-            o[j] = fabsf(a[j]) < detail::MIN_VAL ? 0.f : v[j];
-          break;
-        }
-#endif
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j) {
-          float v = fabsf(a[j]);
-          o[j] = v < detail::MIN_VAL ? 0.f : logf(v);
-        }
-        break;
-      case node::type::sq:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] * a[j];
-        break;
-      case node::type::sqrt:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = sqrtf(fabsf(a[j]));
-        break;
-      case node::type::neg:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = -a[j];
-        break;
-      case node::type::cube:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] * a[j] * a[j];
-        break;
-      default:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j) {
-          float in[2] = {a[j], 0.0f};
-          o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
-        }
-        break;
-      }
-      slot[sp - 1] = o;
+      apply_function(nd, slot[sp - 1], nullptr, buf[sp - 1], n, data, stride,
+                     r0);
+      slot[sp - 1] = buf[sp - 1];
     } else {
-      const float *a = slot[sp - 1];
-      const float *b = slot[sp - 2];
-      float *o = buf[sp - 2];
-      switch (nd.t) {
-      case node::type::add:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] + b[j];
-        break;
-      case node::type::sub:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] - b[j];
-        break;
-      case node::type::mul:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] * b[j];
-        break;
-      case node::type::div:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = fabsf(b[j]) < detail::MIN_VAL ? 1.0f : a[j] / b[j];
-        break;
-      case node::type::fdim:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] <= b[j] ? 0.0f : a[j] - b[j];
-        break;
-      case node::type::gt:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j)
-          o[j] = a[j] > b[j] ? 1.0f : 0.0f;
-        break;
-      default:
-        #pragma GCC ivdep
-        for (int j = 0; j < n; ++j) {
-          float in[2] = {a[j], b[j]};
-          o[j] = detail::evaluate_node(nd, data, stride, r0 + j, in);
-        }
-        break;
-      }
-      slot[sp - 2] = o;
+      apply_function(nd, slot[sp - 1], slot[sp - 2], buf[sp - 2], n, data,
+                     stride, r0);
+      slot[sp - 2] = buf[sp - 2];
       --sp;
     }
   }
@@ -372,72 +377,223 @@ void set_fitness(program &h_prog, const param &params, const int n_rows,
 
 namespace {
 
-float fused_score(const program &p, metric_t metric, const float *data,
-                  const float *Y, const float *W, uint64_t n_samples,
-                  float WS, eval_scratch &s) {
+void block_terms(metric_t metric, const float *res, const float *Y,
+                 const float *W, uint64_t r0, int n, float N, float WS,
+                 float *term) {
   static const bool fast_math = detail::use_fast_math_blocks();
-  float N = static_cast<float>(n_samples);
-  float out = 0.0f;
-  float term[kBlock];
-  for (uint64_t r0 = 0; r0 < n_samples; r0 += kBlock) {
-    int n = static_cast<int>(std::min<uint64_t>(kBlock, n_samples - r0));
-    const float *res = eval_block(p, data, n_samples, r0, n, s.buf, s.slot);
-    if (metric == metric_t::mse) {
-      #pragma GCC ivdep
-      for (int j = 0; j < n; ++j) {
-        uint64_t i = r0 + j;
-        float d = res[j] - Y[i];
-        float error = N * W[i] * d * d / WS;
-        term[j] = error / N;
-      }
-#if defined(GENETIC_FAST_MATH)
-    } else if (fast_math) {
-      float e[kBlock], l[kBlock];
-      #pragma GCC ivdep
-      for (int j = 0; j < n; ++j) {
-        float yp = res[j];
-        bool low = !(yp < -33.3) && yp <= -18;
-        e[j] = low ? yp : -yp;
-      }
-      detail::expf_block(e, e, n);
-      detail::log1pf_block(e, l, n);
-      #pragma GCC ivdep
-      for (int j = 0; j < n; ++j) {
-        uint64_t i = r0 + j;
-        float yp = res[j];
-        float y = Y[i];
-        float w = W[i];
-        float logsig = yp < -33.3 ? yp
-                       : yp <= -18 ? yp - e[j]
-                       : yp <= 37  ? -l[j]
-                                   : -e[j];
-        float error = ((1 - y) * yp - logsig) * (N * w / WS);
-        term[j] = error / N;
-      }
-#endif
-    } else {
-      for (int j = 0; j < n; ++j) {
-        uint64_t i = r0 + j;
-        float logsig;
-        float yp = res[j];
-        float y = Y[i];
-        float w = W[i];
-        if (yp < -33.3)
-          logsig = yp;
-        else if (yp <= -18)
-          logsig = yp - expf(yp);
-        else if (yp <= 37)
-          logsig = -log1pf(expf(-yp));
-        else
-          logsig = -expf(-yp);
-        float error = ((1 - y) * yp - logsig) * (N * w / WS);
-        term[j] = error / N;
-      }
+  if (metric == metric_t::mse) {
+    #pragma GCC ivdep
+    for (int j = 0; j < n; ++j) {
+      uint64_t i = r0 + j;
+      float d = res[j] - Y[i];
+      float error = N * W[i] * d * d / WS;
+      term[j] = error / N;
     }
-    for (int j = 0; j < n; ++j)
-      out += term[j];
+#if defined(GENETIC_FAST_MATH)
+  } else if (fast_math) {
+    float e[kBlock], l[kBlock];
+    #pragma GCC ivdep
+    for (int j = 0; j < n; ++j) {
+      float yp = res[j];
+      bool low = !(yp < -33.3) && yp <= -18;
+      e[j] = low ? yp : -yp;
+    }
+    detail::expf_block(e, e, n);
+    detail::log1pf_block(e, l, n);
+    #pragma GCC ivdep
+    for (int j = 0; j < n; ++j) {
+      uint64_t i = r0 + j;
+      float yp = res[j];
+      float y = Y[i];
+      float w = W[i];
+      float logsig = yp < -33.3 ? yp
+                     : yp <= -18 ? yp - e[j]
+                     : yp <= 37  ? -l[j]
+                                 : -e[j];
+      float error = ((1 - y) * yp - logsig) * (N * w / WS);
+      term[j] = error / N;
+    }
+#endif
+  } else {
+    for (int j = 0; j < n; ++j) {
+      uint64_t i = r0 + j;
+      float logsig;
+      float yp = res[j];
+      float y = Y[i];
+      float w = W[i];
+      if (yp < -33.3)
+        logsig = yp;
+      else if (yp <= -18)
+        logsig = yp - expf(yp);
+      else if (yp <= 37)
+        logsig = -log1pf(expf(-yp));
+      else
+        logsig = -expf(-yp);
+      float error = ((1 - y) * yp - logsig) * (N * w / WS);
+      term[j] = error / N;
+    }
   }
-  return out;
+}
+
+class subtree_dag {
+public:
+  void clear(size_t max_nodes) {
+    ops_.clear();
+    arg0_.clear();
+    arg1_.clear();
+    size_t cap = 16;
+    while (cap < 2 * max_nodes)
+      cap <<= 1;
+    mask_ = cap - 1;
+    table_.assign(cap, -1);
+  }
+
+  int add(const program &p) {
+    stack_.clear();
+    for (int i = p.len - 1; i >= 0; --i) {
+      const node &nd = p.nodes[i];
+      int ar = detail::arity(nd.t);
+      int a0 = -1, a1 = -1;
+      if (ar >= 1) {
+        a0 = stack_.back();
+        stack_.pop_back();
+      }
+      if (ar == 2) {
+        a1 = stack_.back();
+        stack_.pop_back();
+      }
+      stack_.push_back(intern(nd, a0, a1));
+    }
+    return stack_.back();
+  }
+
+  int size() const { return static_cast<int>(ops_.size()); }
+  const node &op(int id) const { return ops_[id]; }
+  int arg0(int id) const { return arg0_[id]; }
+  int arg1(int id) const { return arg1_[id]; }
+
+private:
+  int intern(const node &nd, int a0, int a1) {
+    uint64_t w;
+    std::memcpy(&w, &nd, sizeof(w));
+    uint64_t h = w * 0x9E3779B97F4A7C15ull;
+    h ^= (static_cast<uint64_t>(static_cast<uint32_t>(a0)) << 32 |
+          static_cast<uint32_t>(a1)) * 0xC2B2AE3D27D4EB4Full;
+    h ^= h >> 31;
+    for (size_t pos = h & mask_;; pos = (pos + 1) & mask_) {
+      int id = table_[pos];
+      if (id < 0) {
+        id = size();
+        ops_.push_back(nd);
+        arg0_.push_back(a0);
+        arg1_.push_back(a1);
+        table_[pos] = id;
+        return id;
+      }
+      if (arg0_[id] == a0 && arg1_[id] == a1 &&
+          std::memcmp(&ops_[id], &nd, sizeof(node)) == 0)
+        return id;
+    }
+  }
+
+  std::vector<node> ops_;
+  std::vector<int> arg0_, arg1_;
+  std::vector<int> table_;
+  std::vector<int> stack_;
+  size_t mask_ = 0;
+};
+
+void add_rows_in_order(const float *const *t, int count, uint64_t n,
+                       float *sums) {
+  float s[8] = {};
+  for (int q = 0; q < count; ++q)
+    s[q] = sums[q];
+  if (count == 8) {
+    for (uint64_t i = 0; i < n; ++i) {
+      s[0] += t[0][i];
+      s[1] += t[1][i];
+      s[2] += t[2][i];
+      s[3] += t[3][i];
+      s[4] += t[4][i];
+      s[5] += t[5][i];
+      s[6] += t[6][i];
+      s[7] += t[7][i];
+    }
+  } else {
+    for (int q = 0; q < count; ++q)
+      for (uint64_t i = 0; i < n; ++i)
+        s[q] += t[q][i];
+  }
+  for (int q = 0; q < count; ++q)
+    sums[q] = s[q];
+}
+
+void score_group(std::vector<program> &progs, const int *pids, int count,
+                 metric_t metric, const float *data, const float *Y,
+                 const float *W, uint64_t n_samples, float WS,
+                 uint64_t r_begin, uint64_t r_end, float *terms) {
+  static thread_local subtree_dag dag;
+  static thread_local std::vector<int> roots;
+  static thread_local std::vector<float> arena, sums;
+  static thread_local std::vector<const float *> value;
+
+  size_t total = 0;
+  for (int k = 0; k < count; ++k)
+    total += progs[pids[k]].len;
+  dag.clear(total);
+  roots.resize(count);
+  for (int k = 0; k < count; ++k)
+    roots[k] = dag.add(progs[pids[k]]);
+  const int m = dag.size();
+  arena.resize(static_cast<size_t>(m) * kBlock);
+  value.resize(m);
+  sums.assign(count, 0.0f);
+
+  const float N = static_cast<float>(n_samples);
+  for (uint64_t r0 = r_begin; r0 < r_end; r0 += kBlock) {
+    int n = static_cast<int>(std::min<uint64_t>(kBlock, r_end - r0));
+    for (int id = 0; id < m; ++id) {
+      const node &nd = dag.op(id);
+      float *o = arena.data() + static_cast<size_t>(id) * kBlock;
+      if (nd.t == node::type::variable) {
+        value[id] = data + n_samples * nd.u.fid + r0;
+        continue;
+      }
+      if (nd.t == node::type::constant) {
+        float v = nd.u.val;
+        for (int j = 0; j < n; ++j)
+          o[j] = v;
+      } else {
+        int a1 = dag.arg1(id);
+        apply_function(nd, value[dag.arg0(id)],
+                       a1 >= 0 ? value[a1] : nullptr, o, n, data, n_samples,
+                       r0);
+      }
+      value[id] = o;
+    }
+
+    if (terms != nullptr) {
+      for (int k = 0; k < count; ++k)
+        block_terms(metric, value[roots[k]], Y, W, r0, n, N, WS,
+                    terms + static_cast<size_t>(k) * n_samples + r0);
+      continue;
+    }
+    float term[8][kBlock];
+    const float *term_ptr[8];
+    for (int k0 = 0; k0 < count; k0 += 8) {
+      int kn = std::min(8, count - k0);
+      for (int q = 0; q < kn; ++q) {
+        block_terms(metric, value[roots[k0 + q]], Y, W, r0, n, N, WS,
+                    term[q]);
+        term_ptr[q] = term[q];
+      }
+      add_rows_in_order(term_ptr, kn, n, sums.data() + k0);
+    }
+  }
+  if (terms == nullptr) {
+    for (int k = 0; k < count; ++k)
+      progs[pids[k]].raw_fitness_ = sums[k];
+  }
 }
 
 }
@@ -521,8 +677,18 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
   std::vector<int> work;
   work.reserve(n_progs);
   std::vector<uint64_t> hashes(n_prev + n_progs);
+  std::vector<uint64_t> lead(3 * static_cast<size_t>(n_progs), 0);
+  std::vector<char> stack_ok(n_progs);
   thread_pool::instance().parallel_for(n_prev + n_progs, 256, [&](int i) {
-    hashes[i] = hash_nodes(i < n_prev ? (*prev_progs)[i] : h_progs[i - n_prev]);
+    if (i < n_prev) {
+      hashes[i] = hash_nodes((*prev_progs)[i]);
+      return;
+    }
+    const program &p = h_progs[i - n_prev];
+    hashes[i] = hash_nodes(p);
+    std::memcpy(&lead[3 * static_cast<size_t>(i - n_prev)], p.nodes,
+                sizeof(node) * std::min(p.len, 3));
+    stack_ok[i - n_prev] = fits_block_stack(p);
   });
   for (int i = 0; i < n_prev; ++i) {
     seen.find_or_insert(-1 - i, hashes[i]);
@@ -543,27 +709,106 @@ void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
     WS += sample_weights[i];
   }
 
-  std::stable_sort(work.begin(), work.end(), [&](int a, int b) {
-    return h_progs[a].len > h_progs[b].len;
-  });
-  const int chunk = rows >= 4096 ? 1 : 4;
+  struct sort_key {
+    uint64_t lead[3];
+    int len, pid;
+    bool operator<(const sort_key &o) const {
+      for (int i = 0; i < 3; ++i)
+        if (lead[i] != o.lead[i])
+          return lead[i] < o.lead[i];
+      return len != o.len ? len < o.len : pid < o.pid;
+    }
+  };
+  std::vector<sort_key> keys;
+  std::vector<int> dag_work, single_work;
+  keys.reserve(work.size());
+  for (int pid : work) {
+    if (fused && stack_ok[pid]) {
+      const uint64_t *l = &lead[3 * static_cast<size_t>(pid)];
+      keys.push_back(sort_key{{l[0], l[1], l[2]}, h_progs[pid].len, pid});
+    } else {
+      single_work.push_back(pid);
+    }
+  }
+  std::sort(keys.begin(), keys.end());
+  dag_work.reserve(keys.size());
+  for (const sort_key &k : keys)
+    dag_work.push_back(k.pid);
+  constexpr int kGroupPrograms = 64;
+  constexpr int kGroupNodes = 8192;
+  struct group {
+    int begin, count;
+    long cost;
+  };
+  std::vector<group> groups;
+  for (int k = 0; k < static_cast<int>(dag_work.size());) {
+    group g{k, 0, 0};
+    while (k < static_cast<int>(dag_work.size()) && g.count < kGroupPrograms &&
+           (g.count == 0 || g.cost + h_progs[dag_work[k]].len <= kGroupNodes)) {
+      g.cost += h_progs[dag_work[k]].len;
+      ++g.count;
+      ++k;
+    }
+    groups.push_back(g);
+  }
+  std::stable_sort(groups.begin(), groups.end(),
+                   [](const group &a, const group &b) { return a.cost > b.cost; });
+
+  const int threads = thread_pool::instance().size();
+  const uint64_t n_blocks = (rows + kBlock - 1) / kBlock;
+  uint64_t segments = 1;
+  if (!groups.empty()) {
+    uint64_t wanted = (4 * static_cast<uint64_t>(threads) + groups.size() - 1) /
+                      groups.size();
+    segments = std::max<uint64_t>(1, std::min<uint64_t>(wanted, n_blocks / 4));
+  }
+  const uint64_t seg_rows = (n_blocks + segments - 1) / segments * kBlock;
+  segments = (rows + seg_rows - 1) / seg_rows;
+  if (segments <= 1) {
+    thread_pool::instance().parallel_for(
+        static_cast<int>(groups.size()), 1, [&](int gi) {
+      const group &g = groups[gi];
+      score_group(h_progs, dag_work.data() + g.begin, g.count, params.metric,
+                  data, y, sample_weights, rows, WS, 0, rows, nullptr);
+    });
+  } else {
+    static thread_local std::vector<float> terms_storage;
+    terms_storage.resize(dag_work.size() * rows);
+    float *const terms = terms_storage.data();
+    const int n_tasks = static_cast<int>(groups.size() * segments);
+    thread_pool::instance().parallel_for(n_tasks, 1, [&](int task) {
+      const group &g = groups[task / segments];
+      uint64_t r_begin = (task % segments) * seg_rows;
+      uint64_t r_end = std::min(rows, r_begin + seg_rows);
+      score_group(h_progs, dag_work.data() + g.begin, g.count, params.metric,
+                  data, y, sample_weights, rows, WS, r_begin, r_end,
+                  terms + static_cast<size_t>(g.begin) * rows);
+    });
+    const int n_sum_tasks = (static_cast<int>(dag_work.size()) + 7) / 8;
+    thread_pool::instance().parallel_for(n_sum_tasks, 1, [&](int task) {
+      int k0 = task * 8;
+      int kn = std::min(8, static_cast<int>(dag_work.size()) - k0);
+      const float *t[8];
+      float sums[8] = {};
+      for (int q = 0; q < kn; ++q)
+        t[q] = terms + static_cast<size_t>(k0 + q) * rows;
+      add_rows_in_order(t, kn, rows, sums);
+      for (int q = 0; q < kn; ++q)
+        h_progs[dag_work[k0 + q]].raw_fitness_ = sums[q];
+    });
+  }
+
   thread_pool::instance().parallel_for(
-      static_cast<int>(work.size()), chunk, [&](int w) {
-    const int pid = work[w];
+      static_cast<int>(single_work.size()), 1, [&](int w) {
     static thread_local eval_scratch s;
     static thread_local std::vector<float> y_pred;
-    program &p = h_progs[pid];
-    if (fused && fits_block_stack(p)) {
-      p.raw_fitness_ = fused_score(p, params.metric, data, y, sample_weights,
-                                   rows, WS, s);
-    } else {
-      y_pred.resize(rows);
-      execute_one(p, data, rows, y_pred.data(), s);
-      float score;
-      compute_metric(n_rows, 1, y, y_pred.data(), sample_weights, &score,
-                     params);
-      p.raw_fitness_ = score;
-    }
+    program &p = h_progs[single_work[w]];
+    y_pred.resize(rows);
+    execute_one(p, data, rows, y_pred.data(), s);
+    float score;
+    compute_metric(n_rows, 1, y, y_pred.data(), sample_weights, &score,
+                   params);
+    p.raw_fitness_ = score;
   });
 
   for (int pid = 0; pid < n_progs; ++pid) {
