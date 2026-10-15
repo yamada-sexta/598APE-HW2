@@ -47,6 +47,7 @@ void tournament_kernel(const std::vector<program> &progs, int *win_indices,
 
   auto run = [&](auto better) {
     for (auto idx = 0; idx < n_tours; ++idx) {
+      // Define optima values
       int opt = rng(gen);
       float opt_score = score[opt];
 
@@ -188,6 +189,7 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     }
   }
 
+  // Update raw fitness for all programs
   set_batched_fitness(n_progs, h_nextprogs,
                       generation == 1 ? nullptr : &h_oldprogs, params,
                       n_samples, data, y, sample_weights);
@@ -461,6 +463,7 @@ void symFit(const float *input, const float *labels,
     // Update epochs
     ++params.num_epochs;
 
+    // Update h_currprogs (deepcopy)
     std::swap(h_currprogs, h_nextprogs);
 
     // Update evolution history, depending on the low memory flag

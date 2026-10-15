@@ -20,7 +20,12 @@ public:
     if (b < a) {
       throw std::invalid_argument("Range error: b must be >= a");
     }
-    range_ = static_cast<uint32_t>(b_) - static_cast<uint32_t>(a_) + 1u;
+    static_assert(std::numeric_limits<IntType>::digits <= 32,
+                  "This distribution uses a 32-bit engine");
+    const uint64_t wide_range = static_cast<uint64_t>(
+        static_cast<int64_t>(b_) - static_cast<int64_t>(a_)) + 1;
+    full_range_ = wide_range == (UINT64_C(1) << 32);
+    range_ = full_range_ ? 1u : static_cast<uint32_t>(wide_range);
     // Calculate the largest multiple of 'range' that fits in a uint32_t.
     limit_ = std::numeric_limits<uint32_t>::max() -
              (std::numeric_limits<uint32_t>::max() % range_);
@@ -30,6 +35,9 @@ public:
   // When called with a random engine, returns a uniformly distributed integer.
   // The engine is expected to provide a uint32_t via operator().
   template <typename Engine> result_type operator()(Engine &eng) {
+    if (full_range_) {
+      return static_cast<result_type>(static_cast<int64_t>(a_) + eng());
+    }
     uint32_t x;
     // Rejection sampling to avoid bias.
     do {
@@ -38,7 +46,7 @@ public:
     uint64_t low = fastmod_m_ * x;
     uint32_t mod = static_cast<uint32_t>(
         (static_cast<unsigned __int128>(low) * range_) >> 64);
-    return a_ + static_cast<result_type>(mod);
+    return static_cast<result_type>(static_cast<int64_t>(a_) + mod);
   }
 
 private:
@@ -47,6 +55,7 @@ private:
   uint32_t range_;
   uint32_t limit_;
   uint64_t fastmod_m_;
+  bool full_range_;
 };
 
 // Custom uniform real distribution mapping the raw uint32_t to a double in [0,

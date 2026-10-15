@@ -36,3 +36,6 @@ compile_commands.json
 genetic_benchmark
 check_fast_math
 check_rng
+correctness
+training_trace
+training_trace.txt

@@ -6,6 +6,7 @@
 #include "reg_stack.h"
 #include "thread_pool.h"
 #include <algorithm>
+#include <utility>
 #include <cstdint>
 #include <fitness.h>
 #include <node.h>
@@ -66,6 +67,8 @@ bool fits_block_stack(const program &p) {
   int sp = 0;
   for (int i = p.len - 1; i >= 0; --i) {
     int ar = detail::arity(p.nodes[i].t);
+    if (ar == 0 && detail::is_nonterminal(p.nodes[i].t))
+      return false;
     if (sp < ar)
       return false;
     sp -= ar;
@@ -258,55 +261,43 @@ void execute_one(const program &p, const float *data, uint64_t n_rows,
 }
 
 program::program()
-    : len(0), depth(0), raw_fitness_(0.0f), metric(metric_t::mse),
-      mut_type(mutation_t::none), nodes(nullptr) {}
+    : nodes(nullptr), len(0), depth(0), raw_fitness_(0.0f), metric(metric_t::mse),
+      mut_type(mutation_t::none) {}
 
 program::~program() { delete[] nodes; }
 
 program::program(const program &src)
-    : len(src.len), depth(src.depth), raw_fitness_(src.raw_fitness_),
+    : nodes(src.len ? new node[src.len] : nullptr), len(src.len), depth(src.depth), raw_fitness_(src.raw_fitness_),
       metric(src.metric), mut_type(src.mut_type) {
-  nodes = new node[len];
-  std::copy(src.nodes, src.nodes + src.len, nodes);
-}
-
-program::program(program &&src) noexcept
-    : nodes(src.nodes), len(src.len), depth(src.depth),
-      raw_fitness_(src.raw_fitness_), metric(src.metric),
-      mut_type(src.mut_type) {
-  src.nodes = nullptr;
-  src.len = 0;
-}
-
-program &program::operator=(program &&src) noexcept {
-  if (this != &src) {
-    delete[] nodes;
-    nodes = src.nodes;
-    len = src.len;
-    depth = src.depth;
-    raw_fitness_ = src.raw_fitness_;
-    metric = src.metric;
-    mut_type = src.mut_type;
-    src.nodes = nullptr;
-    src.len = 0;
-  }
-  return *this;
+  if (len) std::copy_n(src.nodes, len, nodes);
 }
 
 program &program::operator=(const program &src) {
-  if (this == &src)
-    return *this;
+  if (this == &src) return *this;
+  node *replacement = src.len ? new node[src.len] : nullptr;
+  if (src.len) std::copy_n(src.nodes, src.len, replacement);
+  delete[] nodes;
+  nodes = replacement;
   len = src.len;
   depth = src.depth;
   raw_fitness_ = src.raw_fitness_;
   metric = src.metric;
   mut_type = src.mut_type;
 
-  // Copy nodes
-  delete[] nodes;
-  nodes = new node[len];
-  std::copy(src.nodes, src.nodes + src.len, nodes);
+  return *this;
+}
 
+program::program(program &&src) noexcept : program() { *this = std::move(src); }
+
+program &program::operator=(program &&src) noexcept {
+  if (this == &src) return *this;
+  delete[] nodes;
+  nodes = std::exchange(src.nodes, nullptr);
+  len = std::exchange(src.len, 0);
+  depth = std::exchange(src.depth, 0);
+  raw_fitness_ = src.raw_fitness_;
+  metric = src.metric;
+  mut_type = src.mut_type;
   return *this;
 }
 
@@ -1038,6 +1029,7 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
   uniform_real_distribution_custom<float> dist_uniform(0.0f, 1.0f);
   float bound = dist_uniform(rng);
 
+  // Specify subtree start probs acc to Koza's selection approach
   float sum = 0.1 * len;
   for (int i = 0; i < len; ++i) {
     if (detail::is_nonterminal(pnodes[i].t)) {

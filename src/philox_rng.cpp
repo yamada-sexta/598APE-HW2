@@ -1,6 +1,7 @@
 #include <philox_rng.h>
 #include <math.h>
 
+/* Global generator state */
 thread_local philox_state_t global_philox_state = {
     .counter = {1, 2, 3, 3},
     .key = {56, 712},
@@ -160,10 +161,10 @@ int32_t philox_random_int32_range(int32_t min, int32_t max) {
     if (min >= max) {
         return min;
     }
-    uint32_t range = (uint32_t)(max - min + 1);
+    uint64_t range = (uint64_t)((int64_t)max - (int64_t)min) + 1;
     uint32_t x = philox_random_uint32();
-    uint32_t r = x % range;
-    return min + (int32_t)r;
+    uint64_t r = x % range;
+    return (int32_t)((int64_t)min + (int64_t)r);
 }
 
 /* Generate a random int64 in the range [min, max] */
@@ -171,10 +172,11 @@ int64_t philox_random_int64_range(int64_t min, int64_t max) {
     if (min >= max) {
         return min;
     }
-    uint64_t range = (uint64_t)(max - min + 1);
+    uint64_t range = (uint64_t)max - (uint64_t)min + 1;
     uint64_t x = philox_random_uint64();
-    uint64_t r = x % range;
-    return min + (int64_t)r;
+    uint64_t r = range == 0 ? x : x % range;
+    if (r <= INT64_MAX) return min + (int64_t)r;
+    return (min + INT64_MAX) + 1 + (int64_t)(r - (UINT64_C(1) << 63));
 }
 
 /* Generate a random double in the range [min, max) */

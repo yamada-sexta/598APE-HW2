@@ -144,7 +144,7 @@ void find_batched_fitness(int n_progs, program_t d_progs, float *score,
  * @param y               Device pointer to input labels
  * @param sample_weights  Device pointer to sample weights
  */
-void set_fitness(program_t &d_prog, program &h_prog, const param &params,
+void set_fitness(program &h_prog, const param &params,
                  const int n_rows, const float *data, const float *y,
                  const float *sample_weights);
 
