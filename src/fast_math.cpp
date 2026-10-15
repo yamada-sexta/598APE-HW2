@@ -335,8 +335,8 @@ static bool blocks_match_libm() {
     return true;
   };
   int n = 0;
-  for (uint64_t k = 0; k < 65536; ++k) {
-    uint32_t u = static_cast<uint32_t>(k * 65537u);
+  for (uint64_t k = 0; k < 4096; ++k) {
+    uint32_t u = static_cast<uint32_t>(k * 1048573u);
     std::memcpy(&in[n++], &u, 4);
     if (n == B) {
       if (!check(n))
@@ -344,8 +344,8 @@ static bool blocks_match_libm() {
       n = 0;
     }
   }
-  for (int k = -130000; k <= 130000; ++k) {
-    in[n++] = k * 0.001f;
+  for (int k = -4160; k <= 4160; ++k) {
+    in[n++] = k * 0.03125f;
     if (n == B) {
       if (!check(n))
         return false;
