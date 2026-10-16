@@ -30,7 +30,7 @@
 #include "node.h"
 #include "program.h"
 #include "program_selection.h"
-#include "thread_pool.h"
+#include "src/thread_pool.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 

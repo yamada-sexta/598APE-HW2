@@ -1,0 +1,467 @@
+[
+  {
+    "compiler": "gcc",
+    "requested_level": 0,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O0",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O0"
+    ],
+    "build_exit": 0,
+    "build_seconds": 7.603214126000239,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 19.17,
+        "peak_rss_kib": 12044,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "49aae2f943ab1df26d32bea3eeef78160b3bde10d96928029672636761627b8f"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 0,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O0",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O0"
+    ],
+    "build_exit": 0,
+    "build_seconds": 5.62225455299631,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 21.18,
+        "peak_rss_kib": 11864,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "18816882925631e297f8b1eb3d277d7fca6fb3aa693c2a304d35a51f5571aa60"
+  },
+  {
+    "compiler": "gcc",
+    "requested_level": 1,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O1",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O1"
+    ],
+    "build_exit": 0,
+    "build_seconds": 11.562398652997217,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 5.74,
+        "peak_rss_kib": 11804,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "9d61d684120f8316396c7d3ea12df07860e17c2579fcb61eed9cdfb6a2dec23e"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 1,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O1",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O1"
+    ],
+    "build_exit": 0,
+    "build_seconds": 8.405901999998605,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 7.22,
+        "peak_rss_kib": 12132,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "79f2323f68c73d1c3fa1fc5a6beb4dce5c6b976c3508f7644110054eb83e86c9"
+  },
+  {
+    "compiler": "gcc",
+    "requested_level": 2,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O2",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O2"
+    ],
+    "build_exit": 0,
+    "build_seconds": 13.231545931004803,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 7.07,
+        "peak_rss_kib": 12084,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "3b6a6329a08dda918aafa6317975d9120b3e356f96c7a2f500a70374b9361e50"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 2,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O2",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O2"
+    ],
+    "build_exit": 0,
+    "build_seconds": 8.139831963999313,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 1.61,
+        "peak_rss_kib": 12088,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.74,
+        "peak_rss_kib": 11908,
+        "matches_reference": true,
+        "stderr": "",
+        "exclude_from_summary": true,
+        "note": "Profiling overlapped the start of this repeat batch; excluded conservatively."
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.74,
+        "peak_rss_kib": 12348,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.63,
+        "peak_rss_kib": 12268,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "678768579b7a44a8a8dc5e9a5dd1462acc8e874a38d7a8e1d270ad2cd7984881"
+  },
+  {
+    "compiler": "gcc",
+    "requested_level": 3,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O3",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O3"
+    ],
+    "build_exit": 0,
+    "build_seconds": 15.130167963005078,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 4.67,
+        "peak_rss_kib": 12240,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 5.23,
+        "peak_rss_kib": 11948,
+        "matches_reference": true,
+        "stderr": "",
+        "exclude_from_summary": true,
+        "note": "Profiling overlapped the start of this repeat batch; excluded conservatively."
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 4.65,
+        "peak_rss_kib": 11880,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 4.66,
+        "peak_rss_kib": 12084,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "887a2b3740c47c57b4a97e10f7a448a73466edb0e88b479f87e41ddfa1566ee9"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 3,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O3",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O3"
+    ],
+    "build_exit": 0,
+    "build_seconds": 8.351510622000205,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 1.58,
+        "peak_rss_kib": 12360,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.65,
+        "peak_rss_kib": 12212,
+        "matches_reference": true,
+        "stderr": "",
+        "exclude_from_summary": true,
+        "note": "Profiling overlapped the start of this repeat batch; excluded conservatively."
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.67,
+        "peak_rss_kib": 12024,
+        "matches_reference": true,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "wall_seconds": 1.63,
+        "peak_rss_kib": 12092,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "8b6a586a319bacf69b6070791d6436f1be3f7a19ee895941fad7db580f75f91a"
+  },
+  {
+    "compiler": "gcc",
+    "requested_level": 4,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O4",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O4"
+    ],
+    "build_exit": 0,
+    "build_seconds": 15.721695511994767,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 4.75,
+        "peak_rss_kib": 12204,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "887a2b3740c47c57b4a97e10f7a448a73466edb0e88b479f87e41ddfa1566ee9"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 4,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O4",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O4"
+    ],
+    "build_exit": 0,
+    "build_seconds": 8.60010682400025,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 1.63,
+        "peak_rss_kib": 12392,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "8b6a586a319bacf69b6070791d6436f1be3f7a19ee895941fad7db580f75f91a"
+  },
+  {
+    "compiler": "gcc",
+    "requested_level": 5,
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-O5",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/gcc-O5"
+    ],
+    "build_exit": 0,
+    "build_seconds": 15.351521926000714,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 4.7,
+        "peak_rss_kib": 12064,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "887a2b3740c47c57b4a97e10f7a448a73466edb0e88b479f87e41ddfa1566ee9"
+  },
+  {
+    "compiler": "clang",
+    "requested_level": 5,
+    "command": [
+      "clang++",
+      "-std=c++17",
+      "-O5",
+      "-ffp-contract=off",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I.",
+      "src/genetic.cpp",
+      "src/node.cpp",
+      "src/philox_rng.cpp",
+      "src/program.cpp",
+      "benchmark/genetic_benchmark.cpp",
+      "-o",
+      "/tmp/598ape-perf-review.hPXgsL/clang-O5"
+    ],
+    "build_exit": 0,
+    "build_seconds": 7.508630838005047,
+    "runs": [
+      {
+        "exit": 0,
+        "wall_seconds": 1.65,
+        "peak_rss_kib": 12084,
+        "matches_reference": true,
+        "stderr": ""
+      }
+    ],
+    "sha256": "8b6a586a319bacf69b6070791d6436f1be3f7a19ee895941fad7db580f75f91a"
+  }
+]

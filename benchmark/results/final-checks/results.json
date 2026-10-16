@@ -1,0 +1,205 @@
+{
+  "purpose": "Correctness and exact original training-trace checks, not timing benchmarks",
+  "status": "passed",
+  "commands": [
+    {
+      "name": "gcc-O1",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=g++",
+        "OPT_LEVEL=1",
+        "BUILD_DIR=build/final-gcc-O1",
+        "CXXFLAGS=-std=c++17 -O1 -ffp-contract=off -Wall -Wextra"
+      ],
+      "environment_overrides": {}
+    },
+    {
+      "name": "gcc-O2",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=g++",
+        "OPT_LEVEL=2",
+        "BUILD_DIR=build/final-gcc-O2",
+        "CXXFLAGS=-std=c++17 -O2 -ffp-contract=off -Wall -Wextra"
+      ],
+      "environment_overrides": {}
+    },
+    {
+      "name": "clang-O1",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=clang++",
+        "OPT_LEVEL=1",
+        "BUILD_DIR=build/final-clang-O1",
+        "CXXFLAGS=-std=c++17 -O1 -ffp-contract=off -Wall -Wextra"
+      ],
+      "environment_overrides": {}
+    },
+    {
+      "name": "clang-O2",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=clang++",
+        "OPT_LEVEL=2",
+        "BUILD_DIR=build/final-clang-O2",
+        "CXXFLAGS=-std=c++17 -O2 -ffp-contract=off -Wall -Wextra"
+      ],
+      "environment_overrides": {}
+    },
+    {
+      "name": "opencilk-O3-w1",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=/tmp/598ape-opencilk/bin/clang++",
+        "OPT_LEVEL=3",
+        "PARALLEL=cilk"
+      ],
+      "environment_overrides": {
+        "CILK_NWORKERS": "1"
+      }
+    },
+    {
+      "name": "opencilk-O3-w12",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=/tmp/598ape-opencilk/bin/clang++",
+        "OPT_LEVEL=3",
+        "PARALLEL=cilk"
+      ],
+      "environment_overrides": {
+        "CILK_NWORKERS": "12"
+      }
+    },
+    {
+      "name": "opencilk-native-O3-w1",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=/tmp/598ape-opencilk/bin/clang++",
+        "OPT_LEVEL=3",
+        "PARALLEL=cilk",
+        "BUILD_DIR=build/final-opencilk-native",
+        "CXXFLAGS=-std=c++17 -O3 -ffp-contract=off -Wall -Wextra -fopencilk -march=native -flto=thin -fuse-ld=/tmp/598ape-opencilk/bin/ld.lld"
+      ],
+      "environment_overrides": {
+        "CILK_NWORKERS": "1"
+      }
+    },
+    {
+      "name": "opencilk-native-O3-w12",
+      "argv": [
+        "make",
+        "-j3",
+        "test",
+        "CXX=/tmp/598ape-opencilk/bin/clang++",
+        "OPT_LEVEL=3",
+        "PARALLEL=cilk",
+        "BUILD_DIR=build/final-opencilk-native",
+        "CXXFLAGS=-std=c++17 -O3 -ffp-contract=off -Wall -Wextra -fopencilk -march=native -flto=thin -fuse-ld=/tmp/598ape-opencilk/bin/ld.lld"
+      ],
+      "environment_overrides": {
+        "CILK_NWORKERS": "12"
+      }
+    }
+  ],
+  "runs": [
+    {
+      "name": "gcc-O1",
+      "exit": 0,
+      "log_sha256": "a76cf48385560e7f87ef9911c547358d18e4ba11b251ecf1b69fb07d020fd714"
+    },
+    {
+      "name": "gcc-O2",
+      "exit": 0,
+      "log_sha256": "8dfc44adb03eca3c5191f9c168d5d02a0356af0950a532e36a08deffea063213"
+    },
+    {
+      "name": "clang-O1",
+      "exit": 0,
+      "log_sha256": "13487e3d1783f43b03d1a75ad9f136a8278c59ea255397fd7d60d8b577b29c10"
+    },
+    {
+      "name": "clang-O2",
+      "exit": 0,
+      "log_sha256": "2716cd6a42534dbbb6be65326362371ab90058277e618d430aef63eda76fe77d"
+    },
+    {
+      "name": "opencilk-O3-w1",
+      "exit": 0,
+      "log_sha256": "a8919bf2cfa34e1470af58a5b71fda0323fb762461a574c1492e1495a9997b5b"
+    },
+    {
+      "name": "opencilk-O3-w12",
+      "exit": 0,
+      "log_sha256": "a8919bf2cfa34e1470af58a5b71fda0323fb762461a574c1492e1495a9997b5b"
+    },
+    {
+      "name": "opencilk-native-O3-w1",
+      "exit": 0,
+      "log_sha256": "a6eb119256b7f7b22321ffcf33f9df2fea3f1e7b685b042a03a3bdbea9426119"
+    },
+    {
+      "name": "opencilk-native-O3-w12",
+      "exit": 0,
+      "log_sha256": "99221d325a65b4f319cb84685a7401876da5028037eed2d8526a6aa084e07cbd"
+    }
+  ],
+  "experiment": {
+    "argv": [
+      "python3",
+      "benchmark/run_matrix.py",
+      "--output",
+      "benchmark/results/predecode-native-thinlto",
+      "--compilers",
+      "opencilk",
+      "--levels",
+      "3",
+      "--workers",
+      "6",
+      "12",
+      "--extra-flags",
+      "-march=native -flto=thin -fuse-ld=/tmp/598ape-opencilk/bin/ld.lld",
+      "--reference-results",
+      "benchmark/results/baseline-clang-O3/results.json"
+    ],
+    "environment_overrides": {
+      "OPENCILK_CXX": "/tmp/598ape-opencilk/bin/clang++"
+    }
+  },
+  "source_sha256": {
+    "benchmark/genetic_benchmark.cpp": "97ea954a636574ee862f21e48603b1cb8edc98205ba764955fbd0fd5559c026e",
+    "include/common.h": "d5f9ef86569a3a8cbb65f00672c76a5b5783d1c569630e6622a26152b4023b49",
+    "include/ctimer.h": "7ff4f602239a1aa9e81a67db0844444803fe458986cfc2af9e3186ce2ba1e746",
+    "include/custom_distributions.h": "0a87f9ebe96a98b9bcb3049414c26b9668559de7bb5a04b1c51eeca69638121d",
+    "include/fitness.h": "18223f47a065d3759703e7b9853a32bb267d7f9d56be4573266ecefb081414e2",
+    "include/genetic.h": "ff9054714d3f669dcfc24f2b7df3c318d3521c214bd1954a060d8b1f29299ff6",
+    "include/node.h": "ea05a9e8999e84a2acc3c37c90e89f9babd79f21e02a68dbc542159dc5279daf",
+    "include/philox_engine.h": "634b178b3be20948d0358f1af44d6a294cd97973ae0098b2971b2edfef224b73",
+    "include/philox_rng.h": "668a9015859f700b5cc04e08cd97bcf0e4c8fe51e9ed5d4c6a6df8095b7a0fec",
+    "include/program.h": "558092e1f72074131f7f7f13644c43fee1ea8e1f75d60690e5e9cd0be0a02fae",
+    "include/program_selection.h": "905530430fa24e1d0ee504bba6b182fd4336c141d64306d9367236906abd382a",
+    "include/stb_image.h": "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3",
+    "src/constants.h": "ef4ea21769829582b0d37a60c3ef599d0f4b53e80f6a6af4b9a3a3fe8744a661",
+    "src/genetic.cpp": "f3c3a3efbb5a243a02d238360e230996ca4fcb5235a0c6ab9ef6cd1a689251d8",
+    "src/node.cpp": "785b7b46ada4e5c35dd29f5542e46d602d7d7f68cdcca266937cfe9a195f7520",
+    "src/node_detail.h": "64f4b4ec28e3e35ec434030735be949536a745f61e69cbc88033697d2a6f43b1",
+    "src/philox_rng.cpp": "5ab6a9360cd595ee01d9125e64e7e7c6674db0a775b16153dbfbe1f2b632400e",
+    "src/program.cpp": "16ff380599b00a5ca2f5762847a9389cd508c5b110054655617caee9c0e9f0cf",
+    "src/reg_stack.h": "1a205c3ef170e525d9ba661739f1377435ffbc5df796818b93c71930548913ff"
+  },
+  "fixture_sha256": "2fb46078e4e334d04f30854fe4c6e5e38df546319f8f4fd69a8c387e30856a3a",
+  "experiment_exit": 0
+}
