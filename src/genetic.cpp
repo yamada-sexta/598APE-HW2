@@ -405,7 +405,7 @@ std::string stringify(const program &prog) {
 }
 
 void symFit(const float *input, const float *labels,
-            const float *sample_weights, const int n_rows, const int n_cols,
+            const float *sample_weights, const int n_rows, const int,
             param &params, program_t &final_progs,
             std::vector<std::vector<program>> &history) {
 
@@ -552,7 +552,7 @@ void symClfPredict(const float *input, const int n_rows, const param &params,
 
 void symTransform(const float *input, const param &params,
                   const program_t &final_progs, const int n_rows,
-                  const int n_cols, float *output) {
+                  const int, float *output) {
   // cudaStream_t stream = handle.get_stream();
   // Execute final_progs(ordered by fitness) on input
   // output of size [n_rows,hall_of_fame]

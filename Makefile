@@ -17,6 +17,8 @@ OBJS := $(SRCS:$(SRC_DIR)/%.cpp=$(OBJ_DIR)/%.o)
 BENCH_SRC := $(BENCH_DIR)/genetic_benchmark.cpp
 BENCH_BIN := genetic_benchmark
 
+TEST_BINS := correctness training_trace check_fast_math check_rng
+
 # Default target
 all: directories $(BENCH_BIN)
 
@@ -26,7 +28,7 @@ directories:
 	@mkdir -p $(BENCH_DIR)
 
 # Compile source files to object files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | directories
 	@echo "Compiling $<..."
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -39,26 +41,34 @@ $(BENCH_BIN): $(BENCH_SRC) $(OBJS)
 	@echo "Building benchmark program..."
 	@$(CXX) $(CXXFLAGS) $< $(OBJS) -o $@
 
--include $(OBJS:.o=.d) $(BENCH_BIN).d
+correctness training_trace: %: tests/%.cpp $(OBJS)
+	@$(CXX) $(CXXFLAGS) $^ -o $@
 
-check-math: tests/check_fast_math.cpp $(OBJ_DIR)/fast_math.o
-	@$(CXX) $(CXXFLAGS) $^ -o check_fast_math && ./check_fast_math
+check_fast_math: tests/check_fast_math.cpp $(OBJ_DIR)/fast_math.o
+	@$(CXX) $(CXXFLAGS) $^ -o $@
 
-test: tests/correctness.cpp tests/training_trace.cpp $(OBJS)
-	@$(CXX) $(CXXFLAGS) tests/correctness.cpp $(OBJS) -o correctness && ./correctness
-	@$(CXX) $(CXXFLAGS) tests/training_trace.cpp $(OBJS) -o training_trace
+check_rng: tests/check_rng.cpp $(SRC_DIR)/philox_rng.cpp
+	@$(CXX) $(CXXFLAGS) $^ -o $@
+
+-include $(OBJS:.o=.d) $(BENCH_BIN).d $(TEST_BINS:=.d)
+
+test: correctness training_trace
+	@./correctness
 	@./training_trace > training_trace.txt
 	@diff -u tests/fixtures/training_trace.txt training_trace.txt && echo "training trace matches"
 
-check-rng: tests/check_rng.cpp $(SRC_DIR)/philox_rng.cpp include/philox_engine.h include/custom_distributions.h
-	@$(CXX) $(CXXFLAGS) $< $(SRC_DIR)/philox_rng.cpp -o check_rng && ./check_rng
+check-math: check_fast_math
+	@./check_fast_math
+
+check-rng: check_rng
+	@./check_rng
 
 # Clean build files
 clean:
 	@echo "Cleaning build files..."
-	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d check_fast_math check_fast_math.d check_rng check_rng.d correctness correctness.d training_trace training_trace.d training_trace.txt
+	@rm -rf $(OBJ_DIR) $(BENCH_BIN) $(BENCH_BIN).d $(TEST_BINS) $(TEST_BINS:=.d) training_trace.txt
 
 # Clean and rebuild
 rebuild: clean all
 
-.PHONY: all clean rebuild directories check-math check-rng test
+.PHONY: all clean rebuild directories test check-math check-rng

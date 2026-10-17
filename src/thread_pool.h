@@ -43,7 +43,7 @@ public:
     lk.lock();
     retire(j);
     while (j.helpers > 0) {
-      job *t = pick( true);
+      job *t = pick(true);
       if (t == nullptr) {
         cv_.wait(lk);
         continue;
@@ -117,7 +117,7 @@ private:
   void worker_loop() {
     std::unique_lock<std::mutex> lk(mutex_);
     while (!stop_) {
-      job *t = pick( false);
+      job *t = pick(false);
       if (t == nullptr) {
         cv_.wait(lk);
         continue;

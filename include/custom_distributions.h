@@ -22,6 +22,7 @@ public:
     }
     static_assert(std::numeric_limits<IntType>::digits <= 32,
                   "This distribution uses a 32-bit engine");
+    // Compute the range size.
     const uint64_t wide_range = static_cast<uint64_t>(
         static_cast<int64_t>(b_) - static_cast<int64_t>(a_)) + 1;
     full_range_ = wide_range == (UINT64_C(1) << 32);

@@ -339,12 +339,12 @@ void run_symbolic_regression(const std::string &dataset_file) {
       best_program_indices(final_programs, params.population_size);
 
   std::vector<float> y_pred1(X_test.size());
-  genetic::symRegPredict(X_test_flat.data(), X_test.size(), &final_programs[best_indices[0]],
-                         y_pred1.data());
+  genetic::symRegPredict(X_test_flat.data(), X_test.size(),
+                         &final_programs[best_indices[0]], y_pred1.data());
 
   std::vector<float> y_pred2(X_test.size());
-  genetic::symRegPredict(X_test_flat.data(), X_test.size(), &final_programs[best_indices[1]],
-                         y_pred2.data());
+  genetic::symRegPredict(X_test_flat.data(), X_test.size(),
+                         &final_programs[best_indices[1]], y_pred2.data());
 
   // Calculate MSE on test set
   float mse = utils::mean_squared_error(y_test, y_pred1);

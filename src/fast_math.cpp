@@ -251,9 +251,16 @@ inline float core(float x) {
   float hfsq = 0.5f * f * f;
   float s = f / (2.0f + f);
   float z = s * s;
-  float R = z * (Lp1 + z * (Lp2 + z * (Lp3 + z * (Lp4 + z * (Lp5 + z * (Lp6 + z * Lp7))))));
+  float R = Lp6 + z * Lp7;
+  R = Lp5 + z * R;
+  R = Lp4 + z * R;
+  R = Lp3 + z * R;
+  R = Lp2 + z * R;
+  R = Lp1 + z * R;
+  R = z * R;
   float main0 = f - (hfsq - s * (hfsq + R));
-  float main1 = kf * ln2_hi - ((hfsq - (s * (hfsq + R) + (kf * ln2_lo + c))) - f);
+  float main1 =
+      kf * ln2_hi - ((hfsq - (s * (hfsq + R) + (kf * ln2_lo + c))) - f);
   float res = trig::fsel(k == 0, main0, main1);
 
   float Rz = hfsq * (1.0f - static_cast<float>(0.66666666666666666) * f);
