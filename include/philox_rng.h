@@ -32,12 +32,23 @@ extern "C" {
 #define PHILOX_M4x32A 0xD2511F53
 #define PHILOX_M4x32B 0xCD9E8D57
 
+#define PHILOX_BUF_SIZE 64
+
 /* Generator state */
 typedef struct {
     uint32_t counter[4];
     uint32_t key[2];
     bool initialized;
+    uint32_t buf[PHILOX_BUF_SIZE];
+    uint32_t buf_pos;
+    uint32_t buf_len;
 } philox_state_t;
+
+#ifdef __cplusplus
+extern thread_local philox_state_t global_philox_state;
+#else
+extern _Thread_local philox_state_t global_philox_state;
+#endif
 
 /* Function prototypes */
 void philox_seed(uint32_t seed);

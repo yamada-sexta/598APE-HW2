@@ -2,163 +2,58 @@
 #include "custom_distributions.h"
 #include "node_detail.h"
 #include "philox_engine.h"
-#include "reg_stack.h"
 #include <algorithm>
 #include <cstdint>
-#include <fitness.h>
 #include <node.h>
 #include <numeric>
 #include <program.h>
-#include <random>
 #include <stack>
+#include <utility>
 
 namespace genetic {
 
-/**
- * Execution kernel for a single program. We assume that the input data
- * is stored in column major format.
- */
-template <int MaxSize = MAX_STACK_SIZE>
-void execute_kernel(const program_t d_progs, const float *data, float *y_pred,
-                    const uint64_t n_rows, const uint64_t n_progs) {
-  for (uint64_t pid = 0; pid < n_progs; ++pid) {
-    for (uint64_t row_id = 0; row_id < n_rows; ++row_id) {
-
-      stack<float, MaxSize> eval_stack;
-      program_t curr_p = d_progs + pid; // Current program
-
-      int end = curr_p->len - 1;
-      node *curr_node = curr_p->nodes + end;
-
-      float res = 0.0f;
-      float in[2] = {0.0f, 0.0f};
-
-      while (end >= 0) {
-        if (detail::is_nonterminal(curr_node->t)) {
-          int ar = detail::arity(curr_node->t);
-          in[0] = eval_stack.pop(); // Min arity of function is 1
-          if (ar > 1)
-            in[1] = eval_stack.pop();
-        }
-        res = detail::evaluate_node(*curr_node, data, n_rows, row_id, in);
-        eval_stack.push(res);
-        curr_node--;
-        end--;
-      }
-
-      // Outputs stored in col-major format
-      y_pred[pid * n_rows + row_id] = eval_stack.pop();
-    }
-  }
-}
-
 program::program()
-    : len(0), depth(0), raw_fitness_(0.0f), metric(metric_t::mse),
-      mut_type(mutation_t::none), nodes(nullptr) {}
+    : nodes(nullptr), len(0), depth(0), raw_fitness_(0.0f),
+      metric(metric_t::mse), mut_type(mutation_t::none) {}
 
 program::~program() { delete[] nodes; }
 
 program::program(const program &src)
-    : len(src.len), depth(src.depth), raw_fitness_(src.raw_fitness_),
-      metric(src.metric), mut_type(src.mut_type) {
-  nodes = new node[len];
-  std::copy(src.nodes, src.nodes + src.len, nodes);
+    : nodes(src.len ? new node[src.len] : nullptr), len(src.len),
+      depth(src.depth), raw_fitness_(src.raw_fitness_), metric(src.metric),
+      mut_type(src.mut_type) {
+  if (len)
+    std::copy_n(src.nodes, len, nodes);
 }
 
 program &program::operator=(const program &src) {
+  if (this == &src) return *this;
+  // Copy nodes
+  node *replacement = src.len ? new node[src.len] : nullptr;
+  if (src.len) std::copy_n(src.nodes, src.len, replacement);
+  delete[] nodes;
+  nodes = replacement;
   len = src.len;
   depth = src.depth;
   raw_fitness_ = src.raw_fitness_;
   metric = src.metric;
   mut_type = src.mut_type;
 
-  // Copy nodes
-  delete[] nodes;
-  nodes = new node[len];
-  std::copy(src.nodes, src.nodes + src.len, nodes);
-
   return *this;
 }
 
-void compute_metric(int n_rows, int n_progs, const float *y,
-                    const float *y_pred, const float *w, float *score,
-                    const param &params) {
-  // Call appropriate metric function based on metric defined in params
-  if (params.metric == metric_t::pearson) {
-    weightedPearson(n_rows, n_progs, y, y_pred, w, score);
-  } else if (params.metric == metric_t::spearman) {
-    weightedSpearman(n_rows, n_progs, y, y_pred, w, score);
-  } else if (params.metric == metric_t::mae) {
-    meanAbsoluteError(n_rows, n_progs, y, y_pred, w, score);
-  } else if (params.metric == metric_t::mse) {
-    meanSquareError(n_rows, n_progs, y, y_pred, w, score);
-  } else if (params.metric == metric_t::rmse) {
-    rootMeanSquareError(n_rows, n_progs, y, y_pred, w, score);
-  } else if (params.metric == metric_t::logloss) {
-    logLoss(n_rows, n_progs, y, y_pred, w, score);
-  } else {
-    // This should not be reachable
-  }
-}
+program::program(program &&src) noexcept : program() { *this = std::move(src); }
 
-void execute(const program_t &d_progs, const int n_rows, const int n_progs,
-             const float *data, float *y_pred) {
-  execute_kernel(d_progs, data, y_pred, static_cast<uint64_t>(n_rows),
-                 static_cast<uint64_t>(n_progs));
-}
-
-void find_fitness(program_t d_prog, float *score, const param &params,
-                  const int n_rows, const float *data, const float *y,
-                  const float *sample_weights) {
-
-  // Compute predicted values
-  std::vector<float> y_pred(n_rows);
-  execute(d_prog, n_rows, 1, data, y_pred.data());
-
-  // Compute error
-  compute_metric(n_rows, 1, y, y_pred.data(), sample_weights, score, params);
-}
-
-void find_batched_fitness(int n_progs, program_t d_progs, float *score,
-                          const param &params, const int n_rows,
-                          const float *data, const float *y,
-                          const float *sample_weights) {
-
-  std::vector<float> y_pred((uint64_t)n_rows * (uint64_t)n_progs);
-  execute(d_progs, n_rows, n_progs, data, y_pred.data());
-
-  // Compute error
-  compute_metric(n_rows, n_progs, y, y_pred.data(), sample_weights, score,
-                 params);
-}
-
-void set_fitness(program &h_prog, const param &params, const int n_rows,
-                 const float *data, const float *y,
-                 const float *sample_weights) {
-
-  std::vector<float> score(1);
-
-  find_fitness(&h_prog, score.data(), params, n_rows, data, y, sample_weights);
-
-  // Update host and device score for program
-  h_prog.raw_fitness_ = score[0];
-}
-
-void set_batched_fitness(int n_progs, std::vector<program> &h_progs,
-                         const param &params, const int n_rows,
-                         const float *data, const float *y,
-                         const float *sample_weights) {
-
-  std::vector<float> score(n_progs);
-
-  find_batched_fitness(n_progs, h_progs.data(), score.data(), params, n_rows,
-                       data, y, sample_weights);
-
-  // Update scores on host and device
-  // TODO: Find a way to reduce the number of implicit memory transfers
-  for (auto i = 0; i < n_progs; ++i) {
-    h_progs[i].raw_fitness_ = score[i];
-  }
+program &program::operator=(program &&src) noexcept {
+  if (this == &src) return *this;
+  delete[] nodes;
+  nodes = std::exchange(src.nodes, nullptr);
+  len = std::exchange(src.len, 0);
+  depth = std::exchange(src.depth, 0);
+  raw_fitness_ = src.raw_fitness_;
+  metric = src.metric;
+  mut_type = src.mut_type;
+  return *this;
 }
 
 float get_fitness(const program &prog, const param &params) {
@@ -184,35 +79,32 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
   float bound = dist_uniform(rng);
 
   // Specify subtree start probs acc to Koza's selection approach
-  std::vector<float> node_probs(len, 0.1);
   float sum = 0.1 * len;
-
   for (int i = 0; i < len; ++i) {
-    if (pnodes[i].is_nonterminal()) {
-      node_probs[i] = 0.9;
+    if (detail::is_nonterminal(pnodes[i].t)) {
       sum += 0.8;
     }
   }
-
   // Normalize vector
-  for (int i = 0; i < len; ++i) {
-    node_probs[i] /= sum;
-  }
+  const float p_terminal = static_cast<float>(0.1) / sum;
+  const float p_function = static_cast<float>(0.9) / sum;
 
   // Compute cumulative sum
-  std::partial_sum(node_probs.begin(), node_probs.end(), node_probs.begin());
-
-  start = std::lower_bound(node_probs.begin(), node_probs.end(), bound) -
-          node_probs.begin();
+  start = len;
+  float cumulative = 0.0f;
+  for (int i = 0; i < len; ++i) {
+    cumulative += detail::is_nonterminal(pnodes[i].t) ? p_function : p_terminal;
+    if (!(cumulative < bound)) {
+      start = i;
+      break;
+    }
+  }
   end = start;
 
   // Iterate until all function arguments are satisfied in current subtree
   int num_args = 1;
   while (num_args > end - start) {
-    node curr;
-    curr = pnodes[end];
-    if (curr.is_nonterminal())
-      num_args += curr.arity();
+    num_args += detail::arity(pnodes[end].t);
     ++end;
   }
 
@@ -221,34 +113,31 @@ std::pair<int, int> get_subtree(node *pnodes, int len, PhiloxEngine &rng) {
 
 int get_depth(const program &p_out) {
   int depth = 0;
-  std::stack<int> arity_stack;
+  static thread_local std::vector<int> arity_stack;
+  arity_stack.clear();
   for (auto i = 0; i < p_out.len; ++i) {
-    node curr(p_out.nodes[i]);
+    const node &curr = p_out.nodes[i];
 
     // Update depth
     int sz = arity_stack.size();
     depth = std::max(depth, sz);
 
     // Update stack
-    if (curr.is_nonterminal()) {
-      arity_stack.push(curr.arity());
+    if (detail::is_nonterminal(curr.t)) {
+      arity_stack.push_back(detail::arity(curr.t));
     } else {
       // Only triggered for a depth 0 node
       if (arity_stack.empty())
         break;
 
-      int e = arity_stack.top();
-      arity_stack.pop();
-      arity_stack.push(e - 1);
+      arity_stack.back() -= 1;
 
-      while (arity_stack.top() == 0) {
-        arity_stack.pop();
+      while (arity_stack.back() == 0) {
+        arity_stack.pop_back();
         if (arity_stack.empty())
           break;
 
-        e = arity_stack.top();
-        arity_stack.pop();
-        arity_stack.push(e - 1);
+        arity_stack.back() -= 1;
       }
     }
   }
@@ -258,9 +147,9 @@ int get_depth(const program &p_out) {
 
 void build_program(program &p_out, const param &params, PhiloxEngine &rng) {
   // Define data structures needed for tree
-  std::stack<int> arity_stack;
-  std::vector<node> nodelist;
-  nodelist.reserve(1 << (MAX_STACK_SIZE));
+  std::stack<int, std::vector<int>> arity_stack;
+  static thread_local std::vector<node> nodelist;
+  nodelist.clear();
 
   // Specify Distributions with parameters
   uniform_int_distribution_custom<int> dist_function(
@@ -394,7 +283,7 @@ void point_mutation(const program &prog, program &p_out, const param &params,
 }
 
 void crossover(const program &prog, const program &donor, program &p_out,
-               const param &params, PhiloxEngine &rng) {
+               const param &, PhiloxEngine &rng) {
   // Get a random subtree of prog to replace
   std::pair<int, int> prog_slice = get_subtree(prog.nodes, prog.len, rng);
   int prog_start = prog_slice.first;
@@ -456,7 +345,7 @@ void subtree_mutation(const program &prog, program &p_out, const param &params,
   crossover(prog, new_program, p_out, params, rng);
 }
 
-void hoist_mutation(const program &prog, program &p_out, const param &params,
+void hoist_mutation(const program &prog, program &p_out, const param &,
                     PhiloxEngine &rng) {
   // Replace program subtree with a random sub-subtree
 
@@ -474,6 +363,7 @@ void hoist_mutation(const program &prog, program &p_out, const param &params,
   sub_end += prog_start;
 
   p_out.len = (prog_start) + (sub_end - sub_start) + (prog.len - prog_end);
+  delete[] p_out.nodes;
   p_out.nodes = new node[p_out.len];
   p_out.metric = prog.metric;
 

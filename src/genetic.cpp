@@ -38,40 +38,37 @@ void tournament_kernel(const std::vector<program> &progs, int *win_indices,
   PhiloxEngine gen(seed);
   uniform_int_distribution_custom<int> rng(0, n_progs - 1);
 
-  for (auto idx = 0; idx < n_tours; ++idx) {
-    int r;
-    r = rng(gen);
+  static thread_local std::vector<float> score;
+  score.resize(n_progs);
+  for (int i = 0; i < n_progs; ++i) {
+    float penalty = parsimony * progs[i].len * (2 * criterion - 1);
+    score[i] = progs[i].raw_fitness_ - penalty;
+  }
 
-    // Define optima values
-    int opt = r % n_progs;
-    float opt_penalty = parsimony * progs[opt].len * (2 * criterion - 1);
-    float opt_score = progs[opt].raw_fitness_ - opt_penalty;
+  auto run = [&](auto better) {
+    for (auto idx = 0; idx < n_tours; ++idx) {
+      // Define optima values
+      int opt = rng(gen);
+      float opt_score = score[opt];
 
-    for (int s = 1; s < tour_size; ++s) {
-      r = rng(gen);
-      int curr = r % n_progs;
-      float curr_penalty = parsimony * progs[curr].len * (2 * criterion - 1);
-      float curr_score = progs[curr].raw_fitness_ - curr_penalty;
-
-      if (criterion) {
-        // max score
-        if (opt_score < curr_score) {
-          opt = curr;
-          opt_penalty = curr_penalty;
-          opt_score = curr_score;
-        }
-      } else {
-        // min score
-        if (opt_score > curr_score) {
-          opt = curr;
-          opt_penalty = curr_penalty;
-          opt_score = curr_score;
-        }
+      for (int s = 1; s < tour_size; ++s) {
+        int curr = rng(gen);
+        float curr_score = score[curr];
+        bool b = better(curr_score, opt_score);
+        opt = b ? curr : opt;
+        opt_score = b ? curr_score : opt_score;
       }
-    }
 
-    // Set win index
-    win_indices[idx] = opt;
+      // Set win index
+      win_indices[idx] = opt;
+    }
+  };
+  if (criterion) {
+    // max score
+    run([](float curr, float opt) { return opt < curr; });
+  } else {
+    // min score
+    run([](float curr, float opt) { return opt > curr; });
   }
 }
 
@@ -151,14 +148,28 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
 
     // Perform host mutations
 
-    auto donor_pos = n_progs;
+    std::vector<int> donor_of(n_progs, -1);
+    for (int pos = 0, donor_pos = n_progs; pos < n_progs; ++pos) {
+      if (h_nextprogs[pos].mut_type == mutation_t::crossover)
+        donor_of[pos] = d_win_indices[donor_pos++];
+    }
+    constexpr int kAhead = 8;
+    auto prefetch_nodes = [&](int index) {
+      const program &p = h_oldprogs[index];
+      for (int i = 0; i < std::min(p.len, 32); i += 8)
+        __builtin_prefetch(p.nodes + i);
+    };
     for (auto pos = 0; pos < n_progs; ++pos) {
       auto parent_index = d_win_indices[pos];
+      if (pos + kAhead < n_progs) {
+        prefetch_nodes(d_win_indices[pos + kAhead]);
+        if (donor_of[pos + kAhead] >= 0)
+          prefetch_nodes(donor_of[pos + kAhead]);
+      }
 
       if (h_nextprogs[pos].mut_type == mutation_t::crossover) {
         // Get secondary index
-        auto donor_index = d_win_indices[donor_pos];
-        donor_pos++;
+        auto donor_index = donor_of[pos];
         crossover(h_oldprogs[parent_index], h_oldprogs[donor_index],
                   h_nextprogs[pos], params, h_gen);
       } else if (h_nextprogs[pos].mut_type == mutation_t::subtree) {
@@ -179,8 +190,9 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
   }
 
   // Update raw fitness for all programs
-  set_batched_fitness(n_progs, h_nextprogs, params, n_samples, data, y,
-                      sample_weights);
+  set_batched_fitness(n_progs, h_nextprogs,
+                      generation == 1 ? nullptr : &h_oldprogs, params,
+                      n_samples, data, y, sample_weights);
 }
 
 float param::p_reproduce() const {
@@ -393,7 +405,7 @@ std::string stringify(const program &prog) {
 }
 
 void symFit(const float *input, const float *labels,
-            const float *sample_weights, const int n_rows, const int n_cols,
+            const float *sample_weights, const int n_rows, const int,
             param &params, program_t &final_progs,
             std::vector<std::vector<program>> &history) {
 
@@ -452,7 +464,7 @@ void symFit(const float *input, const float *labels,
     ++params.num_epochs;
 
     // Update h_currprogs (deepcopy)
-    h_currprogs = h_nextprogs;
+    std::swap(h_currprogs, h_nextprogs);
 
     // Update evolution history, depending on the low memory flag
     if (!params.low_memory || gen == 0) {
@@ -540,7 +552,7 @@ void symClfPredict(const float *input, const int n_rows, const param &params,
 
 void symTransform(const float *input, const param &params,
                   const program_t &final_progs, const int n_rows,
-                  const int n_cols, float *output) {
+                  const int, float *output) {
   // cudaStream_t stream = handle.get_stream();
   // Execute final_progs(ordered by fitness) on input
   // output of size [n_rows,hall_of_fame]

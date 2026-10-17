@@ -4,6 +4,10 @@
  */
 
 #include <algorithm>
+#include <cerrno>
+#include <exception>
+#include <cstdlib>
+#include <iterator>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -25,6 +29,8 @@
 #include "genetic.h"
 #include "node.h"
 #include "program.h"
+#include "program_selection.h"
+#include "src/thread_pool.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -40,6 +46,7 @@ load_png(const std::string &filename) {
   // ignored.
   unsigned char *pixels =
       stbi_load(filename.c_str(), &width, &height, &channels, STBI_rgb);
+  if (!pixels) throw std::runtime_error("Failed to decode image: " + filename);
 
   std::vector<std::vector<float>> X;
   std::vector<float> r, g, b;
@@ -67,31 +74,84 @@ load_dataset(const std::string &filename) {
   std::vector<std::vector<float>> X;
   std::vector<float> y;
 
-  std::ifstream file(filename);
+  std::ifstream file(filename, std::ios::binary);
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open file: " + filename);
   }
+  std::string text((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  const char *const text_begin = text.c_str();
+  const char *const text_end = text_begin + text.size();
 
-  std::string line;
   // Skip header
-  std::getline(file, line);
+  const char *body = std::find(text_begin, text_end, '\n');
+  if (body != text_end)
+    ++body;
 
-  while (std::getline(file, line)) {
-    std::vector<float> row;
-    std::stringstream ss(line);
-    std::string value;
+  std::vector<const char *> starts{body};
+  for (const char *q = body + (1 << 16); q < text_end; q += 1 << 16) {
+    q = std::find(q, text_end, '\n');
+    if (q == text_end || q + 1 == text_end)
+      break;
+    starts.push_back(++q);
+  }
+  starts.push_back(text_end);
 
-    while (std::getline(ss, value, ',')) {
-      row.push_back(std::stof(value));
+  const int n_blocks = static_cast<int>(starts.size()) - 1;
+  std::vector<std::vector<std::vector<float>>> block_X(n_blocks);
+  std::vector<std::vector<float>> block_y(n_blocks);
+  std::vector<std::exception_ptr> errors(n_blocks);
+  genetic::thread_pool::instance().parallel_for(n_blocks, 1, [&](int blk) {
+    try {
+      const char *p = starts[blk];
+      const char *const end = starts[blk + 1];
+      while (p < end) {
+        const char *line_end = std::find(p, end, '\n');
+        std::vector<float> row;
+        while (p < line_end) {
+          const char *field_end = std::find(p, line_end, ',');
+          char *parsed;
+          errno = 0;
+          float v = std::strtof(p, &parsed);
+          if (parsed == p) {
+            throw std::invalid_argument("stof");
+          }
+          if (errno == ERANGE) {
+            throw std::out_of_range("stof");
+          }
+          row.push_back(v);
+          p = field_end + (field_end < line_end ? 1 : 0);
+        }
+        p = line_end + 1;
+
+        if (row.size() < 2)
+          throw std::runtime_error("Invalid CSV row in: " + filename);
+        // Last column is target
+        block_y[blk].push_back(row.back());
+        row.pop_back();
+        block_X[blk].push_back(std::move(row));
+      }
+    } catch (...) {
+      errors[blk] = std::current_exception();
     }
-
-    // Last column is target
-    y.push_back(row.back());
-    row.pop_back();
-    X.push_back(row);
+  });
+  size_t n_cols = 0;
+  for (int blk = 0; blk < n_blocks; ++blk) {
+    if (errors[blk]) {
+      std::rethrow_exception(errors[blk]);
+    }
+    for (const auto &row : block_X[blk]) {
+      if (n_cols == 0)
+        n_cols = row.size();
+      if (row.size() != n_cols)
+        throw std::runtime_error("Invalid CSV row in: " + filename);
+    }
+    std::move(block_X[blk].begin(), block_X[blk].end(), std::back_inserter(X));
+    y.insert(y.end(), block_y[blk].begin(), block_y[blk].end());
   }
 
-  return {X, y};
+  if (X.empty()) throw std::runtime_error("Empty dataset: " + filename);
+  return {std::move(X), std::move(y)};
 }
 
 // Convert 2D vector to column-major vector
@@ -184,27 +244,6 @@ float accuracy(const std::vector<float> &y_true,
 
 using namespace genetic;
 
-void insertionSortPrograms(genetic::program *programs, int size) {
-  // set any nan values to +inf
-  for (int i = 0; i < size; ++i) {
-    if (std::isnan(programs[i].raw_fitness_)) {
-      programs[i].raw_fitness_ = std::numeric_limits<float>::max();
-    }
-  }
-
-  // do insertion sort
-  for (int i = 1; i < size; i++) {
-    genetic::program key(programs[i]);
-    int j = i - 1;
-
-    while (j >= 0 && (programs[j].raw_fitness_ > key.raw_fitness_)) {
-      programs[j + 1] = programs[j];
-      j--;
-    }
-    programs[j + 1] = key;
-  }
-}
-
 void run_symbolic_regression(const std::string &dataset_file) {
   std::cout << "\n;;===== Symbolic Regression Benchmark =====\n" << std::endl;
   std::cout << "(provide best-program-1 best-program-2)\n";
@@ -240,6 +279,7 @@ void run_symbolic_regression(const std::string &dataset_file) {
 
   // Set parameters
   genetic::param params;
+  params.low_memory = true;
   params.population_size = 512;
   params.generations = 16;
   params.tournament_size = 4;
@@ -295,15 +335,16 @@ void run_symbolic_regression(const std::string &dataset_file) {
   // }
 
   // Predict on top 2 candidates
-  insertionSortPrograms(final_programs, params.population_size);
+  const auto best_indices =
+      best_program_indices(final_programs, params.population_size);
 
   std::vector<float> y_pred1(X_test.size());
-  genetic::symRegPredict(X_test_flat.data(), X_test.size(), &final_programs[0],
-                         y_pred1.data());
+  genetic::symRegPredict(X_test_flat.data(), X_test.size(),
+                         &final_programs[best_indices[0]], y_pred1.data());
 
   std::vector<float> y_pred2(X_test.size());
-  genetic::symRegPredict(X_test_flat.data(), X_test.size(), &final_programs[1],
-                         y_pred2.data());
+  genetic::symRegPredict(X_test_flat.data(), X_test.size(),
+                         &final_programs[best_indices[1]], y_pred2.data());
 
   // Calculate MSE on test set
   float mse = utils::mean_squared_error(y_test, y_pred1);
@@ -311,7 +352,7 @@ void run_symbolic_regression(const std::string &dataset_file) {
 
   // Extract the best programs and print some stats
   if (history.back().size() > 0) {
-    genetic::program_t best_program1 = &final_programs[0];
+    genetic::program_t best_program1 = &final_programs[best_indices[0]];
     std::cout << ";;Best program 1 details:" << std::endl;
     std::cout << ";;- Length: " << best_program1->len << " nodes" << std::endl;
     std::cout << ";;- Depth: " << best_program1->depth << std::endl;
@@ -323,7 +364,7 @@ void run_symbolic_regression(const std::string &dataset_file) {
     std::string program_str = genetic::stringify(*best_program1);
     std::cout << "(define best-program-1 " << program_str << ")" << std::endl;
 
-    genetic::program_t best_program2 = &final_programs[1];
+    genetic::program_t best_program2 = &final_programs[best_indices[1]];
     std::cout << ";;Best program 2 details:" << std::endl;
     std::cout << ";;- Length: " << best_program2->len << " nodes" << std::endl;
     std::cout << ";;- Depth: " << best_program2->depth << std::endl;
@@ -381,6 +422,7 @@ void run_symbolic_classification(const std::string &dataset_file) {
 
   // Set parameters
   genetic::param params;
+  params.low_memory = true;
   params.population_size = 16384;
   params.generations = 16;
   params.tournament_size = 16;
@@ -440,21 +482,22 @@ void run_symbolic_classification(const std::string &dataset_file) {
   // }
 
   // Predict classes for best 2 programs acc to training
-  insertionSortPrograms(final_programs, params.population_size);
+  const auto best_indices =
+      best_program_indices(final_programs, params.population_size);
   std::vector<float> y_pred1(X_test.size());
   genetic::symClfPredict(X_test_flat.data(), X_test.size(), params,
-                         &final_programs[0], y_pred1.data());
+                         &final_programs[best_indices[0]], y_pred1.data());
 
   std::vector<float> y_pred2(X_test.size());
   genetic::symClfPredict(X_test_flat.data(), X_test.size(), params,
-                         &final_programs[1], y_pred2.data());
+                         &final_programs[best_indices[1]], y_pred2.data());
 
   float acc = utils::accuracy(y_test, y_pred1);
   float acc2 = utils::accuracy(y_test, y_pred2);
 
   // Extract the best programs and print some stats
   if (history.back().size() > 0) {
-    genetic::program_t best_program1 = &final_programs[0];
+    genetic::program_t best_program1 = &final_programs[best_indices[0]];
     std::cout << ";;Best program 1 details:" << std::endl;
     std::cout << ";;- Length: " << best_program1->len << " nodes" << std::endl;
     std::cout << ";;- Depth: " << best_program1->depth << std::endl;
@@ -466,7 +509,7 @@ void run_symbolic_classification(const std::string &dataset_file) {
     std::string program_str = genetic::stringify(*best_program1);
     std::cout << "(define best-program-1 " << program_str << ")" << std::endl;
 
-    genetic::program_t best_program2 = &final_programs[1];
+    genetic::program_t best_program2 = &final_programs[best_indices[1]];
     std::cout << ";;Best program 2 details:" << std::endl;
     std::cout << ";;- Length: " << best_program2->len << " nodes" << std::endl;
     std::cout << ";;- Depth: " << best_program2->depth << std::endl;
@@ -506,10 +549,11 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
   ctimer_start(&end_to_end_timer);
 
   std::cout << ";;Loading " << png_file << std::endl;
-  std::vector<std::vector<float>> X = std::get<0>(utils::load_png(png_file));
-  std::vector<float> r = std::get<1>(utils::load_png(png_file));
-  std::vector<float> g = std::get<2>(utils::load_png(png_file));
-  std::vector<float> b = std::get<3>(utils::load_png(png_file));
+  auto image = utils::load_png(png_file);
+  std::vector<std::vector<float>> X = std::move(std::get<0>(image));
+  std::vector<float> r = std::move(std::get<1>(image));
+  std::vector<float> g = std::move(std::get<2>(image));
+  std::vector<float> b = std::move(std::get<3>(image));
   const bool monochrome = (r == g && g == b);
   // Use the same [-pi, pi] coordinate domain for every input image.
   // Exported channel functions still accept normalized (x,y) coordinates.
@@ -546,6 +590,7 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
   std::vector<float> sample_weights(X_train.size(), 1.0f);
 
   genetic::param params;
+  params.low_memory = true;
   params.population_size = 128;
   params.generations = 16;
   params.tournament_size = 4;
@@ -580,38 +625,61 @@ void run_symbolic_reconstruction(const std::string &png_file, int K) {
             << " generations per model\n";
 
   const int channel_count = monochrome ? 1 : 3;
+
+  struct model_result {
+    std::string report;
+    std::vector<float> predictions;
+  };
+  std::vector<model_result> results(channel_count * K);
+  genetic::thread_pool::instance().parallel_for(
+      channel_count * K, 1,
+      [&](int task) {
+        const int channel = task / K, model = task % K;
+        const auto &y_train = channel_splits[channel]->first;
+        const auto &y_test = channel_splits[channel]->second;
+        genetic::param model_params = params;
+        model_params.random_state =
+            base_seed + static_cast<uint32_t>(channel) * K + model;
+        genetic::program_t final_programs =
+            new genetic::program[model_params.population_size]();
+        std::vector<std::vector<genetic::program>> history;
+        genetic::symFit(X_train_flat.data(), y_train.data(),
+                        sample_weights.data(), X_train.size(),
+                        model_params.num_features, model_params,
+                        final_programs, history);
+        const auto best_indices =
+            best_program_indices(final_programs, model_params.population_size);
+        genetic::program_t best_program = &final_programs[best_indices[0]];
+
+        std::vector<float> predictions(X_test.size());
+        genetic::symRegPredict(X_test_flat.data(), X_test.size(), best_program,
+                               predictions.data());
+        std::ostringstream report;
+        report << std::setprecision(std::cout.precision());
+        report << ";; " << channel_names[channel] << " model " << model
+               << ", seed " << model_params.random_state << ", training MSE "
+               << best_program->raw_fitness_ << ", test MSE "
+               << utils::mean_squared_error(y_test, predictions) << ", nodes "
+               << best_program->len << "\n";
+        // stringify returns a lambda; apply it to X inside define-channel.
+        report << "  (" << genetic::stringify(*best_program)
+               << " (model-input X))\n";
+        results[task] = {report.str(), std::move(predictions)};
+        delete[] final_programs;
+      },
+       false);
+
   for (int channel = 0; channel < channel_count; ++channel) {
-    const auto &y_train = channel_splits[channel]->first;
     const auto &y_test = channel_splits[channel]->second;
     std::vector<float> average_predictions(X_test.size(), 0.0f);
     std::cout << "(define-channel (" << channel_names[channel] << " X)\n";
 
     for (int model = 0; model < K; ++model) {
-      params.random_state =
-          base_seed + static_cast<uint32_t>(channel) * K + model;
-      genetic::program_t final_programs =
-          new genetic::program[params.population_size]();
-      std::vector<std::vector<genetic::program>> history;
-      genetic::symFit(X_train_flat.data(), y_train.data(),
-                      sample_weights.data(), X_train.size(),
-                      params.num_features, params, final_programs, history);
-      insertionSortPrograms(final_programs, params.population_size);
-      genetic::program_t best_program = &final_programs[0];
-
-      std::vector<float> predictions(X_test.size());
-      genetic::symRegPredict(X_test_flat.data(), X_test.size(), best_program,
-                             predictions.data());
-      for (size_t i = 0; i < predictions.size(); ++i) {
-        average_predictions[i] += predictions[i] / K;
+      const model_result &r = results[channel * K + model];
+      for (size_t i = 0; i < r.predictions.size(); ++i) {
+        average_predictions[i] += r.predictions[i] / K;
       }
-      std::cout << ";; " << channel_names[channel] << " model " << model
-                << ", seed " << params.random_state << ", training MSE "
-                << best_program->raw_fitness_ << ", test MSE "
-                << utils::mean_squared_error(y_test, predictions) << ", nodes "
-                << best_program->len << "\n";
-      // stringify returns a lambda; apply it to X inside define-channel.
-      std::cout << "  (" << genetic::stringify(*best_program) << " (model-input X))\n";
-      delete[] final_programs;
+      std::cout << r.report;
     }
     std::cout << ")\n";
     float mse = utils::mean_squared_error(y_test, average_predictions);

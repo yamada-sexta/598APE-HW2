@@ -34,3 +34,13 @@
 compile_commands.json
 .cache/
 genetic_benchmark
+check_fast_math
+check_rng
+correctness
+training_trace
+training_trace.txt
+__pycache__/
+*.py[cod]
+build/
+benchmark/results/*/*
+!benchmark/results/*/results.json
